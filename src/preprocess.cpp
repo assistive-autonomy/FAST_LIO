@@ -1,5 +1,11 @@
 #include "preprocess.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+
 #include <pcl/common/common.h>
 
 #define RETURN0 0x00
@@ -83,6 +89,10 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
 
     case MID360:
       mid360_handler(msg);
+      break;
+
+    case AUTOWARE:
+      autoware_handler(msg);
       break;
 
     default:
@@ -555,6 +565,229 @@ void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
     }
   }
 }
+
+
+
+void Preprocess::autoware_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+{
+  pl_surf.clear();
+  pl_corn.clear();
+  pl_full.clear();
+
+  static const rclcpp::Logger logger = rclcpp::get_logger("fast_lio.preprocess");
+  static int debug_count = 0;
+
+  if (msg->is_bigendian)
+  {
+    RCLCPP_ERROR(logger, "AUTOWARE PointCloud2 big-endian data is not supported");
+    return;
+  }
+
+  auto find_field = [&](const std::string &name) -> const sensor_msgs::msg::PointField *
+  {
+    for (const auto &field : msg->fields)
+    {
+      if (field.name == name) return &field;
+    }
+    return nullptr;
+  };
+
+  auto field_size = [](uint8_t datatype) -> size_t
+  {
+    switch (datatype)
+    {
+      case sensor_msgs::msg::PointField::INT8:
+      case sensor_msgs::msg::PointField::UINT8:
+        return 1;
+      case sensor_msgs::msg::PointField::INT16:
+      case sensor_msgs::msg::PointField::UINT16:
+        return 2;
+      case sensor_msgs::msg::PointField::INT32:
+      case sensor_msgs::msg::PointField::UINT32:
+      case sensor_msgs::msg::PointField::FLOAT32:
+        return 4;
+      case sensor_msgs::msg::PointField::FLOAT64:
+        return 8;
+      default:
+        return 0;
+    }
+  };
+
+  auto valid_field = [&](const sensor_msgs::msg::PointField *field,
+                         const char *name,
+                         uint8_t datatype) -> bool
+  {
+    if (field == nullptr)
+    {
+      RCLCPP_ERROR(logger, "AUTOWARE PointCloud2 missing field '%s'", name);
+      return false;
+    }
+    if (field->datatype != datatype || field->count != 1)
+    {
+      RCLCPP_ERROR(logger,
+                   "AUTOWARE PointCloud2 field '%s' has datatype=%u count=%u, expected datatype=%u count=1",
+                   name, field->datatype, field->count, datatype);
+      return false;
+    }
+    const size_t size = field_size(field->datatype);
+    if (size == 0 || static_cast<size_t>(field->offset) + size > msg->point_step)
+    {
+      RCLCPP_ERROR(logger, "AUTOWARE PointCloud2 field '%s' exceeds point_step", name);
+      return false;
+    }
+    return true;
+  };
+
+  const auto *fx = find_field("x");
+  const auto *fy = find_field("y");
+  const auto *fz = find_field("z");
+  const auto *fi = find_field("intensity");
+  const auto *fc = find_field("channel");
+  const auto *ft = find_field("time_stamp");
+
+  if (!valid_field(fx, "x", sensor_msgs::msg::PointField::FLOAT32) ||
+      !valid_field(fy, "y", sensor_msgs::msg::PointField::FLOAT32) ||
+      !valid_field(fz, "z", sensor_msgs::msg::PointField::FLOAT32) ||
+      !valid_field(fi, "intensity", sensor_msgs::msg::PointField::UINT8) ||
+      !valid_field(fc, "channel", sensor_msgs::msg::PointField::UINT16) ||
+      !valid_field(ft, "time_stamp", sensor_msgs::msg::PointField::UINT32))
+  {
+    return;
+  }
+
+  const size_t total_points = static_cast<size_t>(msg->width) * static_cast<size_t>(msg->height);
+  if (total_points == 0) return;
+
+  const size_t required_size =
+      static_cast<size_t>(msg->height - 1) * msg->row_step + static_cast<size_t>(msg->width) * msg->point_step;
+  if (msg->data.size() < required_size)
+  {
+    RCLCPP_ERROR(logger, "AUTOWARE PointCloud2 data size %zu is smaller than expected %zu",
+                 msg->data.size(), required_size);
+    return;
+  }
+
+  auto read_float32 = [](const uint8_t *ptr) -> float
+  {
+    float value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return value;
+  };
+
+  auto read_uint8 = [](const uint8_t *ptr) -> uint8_t
+  {
+    uint8_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return value;
+  };
+
+  auto read_uint16 = [](const uint8_t *ptr) -> uint16_t
+  {
+    uint16_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return value;
+  };
+
+  // The field is declared UINT32, but the payload uses signed offsets in the
+  // same 32 bits. Values near 2^32 are small negative offsets.
+  auto read_time_stamp_signed = [](const uint8_t *ptr) -> int32_t
+  {
+    int32_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return value;
+  };
+
+  int32_t min_time_raw = std::numeric_limits<int32_t>::max();
+  int32_t max_time_raw = std::numeric_limits<int32_t>::min();
+
+  for (uint32_t row = 0; row < msg->height; ++row)
+  {
+    const uint8_t *row_ptr = msg->data.data() + static_cast<size_t>(row) * msg->row_step;
+    for (uint32_t col = 0; col < msg->width; ++col)
+    {
+      const uint8_t *base = row_ptr + static_cast<size_t>(col) * msg->point_step;
+      const int32_t time_raw = read_time_stamp_signed(base + ft->offset);
+      min_time_raw = std::min(min_time_raw, time_raw);
+      max_time_raw = std::max(max_time_raw, time_raw);
+    }
+  }
+
+  const int filter_step = std::max(1, point_filter_num);
+  pl_surf.points.reserve(total_points / filter_step + 1);
+
+  float min_curvature = std::numeric_limits<float>::max();
+  float max_curvature = -std::numeric_limits<float>::max();
+  size_t invalid_channel_count = 0;
+  size_t invalid_xyz_count = 0;
+  size_t blind_count = 0;
+
+  for (uint32_t row = 0; row < msg->height; ++row)
+  {
+    const uint8_t *row_ptr = msg->data.data() + static_cast<size_t>(row) * msg->row_step;
+    for (uint32_t col = 0; col < msg->width; ++col)
+    {
+      const size_t idx = static_cast<size_t>(row) * msg->width + col;
+      if (idx % filter_step != 0) continue;
+
+      const uint8_t *base = row_ptr + static_cast<size_t>(col) * msg->point_step;
+      const uint16_t channel = read_uint16(base + fc->offset);
+      if (channel >= static_cast<uint16_t>(N_SCANS))
+      {
+        ++invalid_channel_count;
+        continue;
+      }
+
+      PointType point;
+      point.x = read_float32(base + fx->offset);
+      point.y = read_float32(base + fy->offset);
+      point.z = read_float32(base + fz->offset);
+      point.intensity = static_cast<float>(read_uint8(base + fi->offset));
+      point.normal_x = 0.0;
+      point.normal_y = 0.0;
+      point.normal_z = 0.0;
+
+      if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+      {
+        ++invalid_xyz_count;
+        continue;
+      }
+
+      const double range2 = point.x * point.x + point.y * point.y + point.z * point.z;
+      if (range2 <= blind * blind)
+      {
+        ++blind_count;
+        continue;
+      }
+
+      const int32_t time_raw = read_time_stamp_signed(base + ft->offset);
+      point.curvature = static_cast<float>((time_raw - min_time_raw) * time_unit_scale);
+      min_curvature = std::min(min_curvature, point.curvature);
+      max_curvature = std::max(max_curvature, point.curvature);
+      pl_surf.points.push_back(point);
+    }
+  }
+
+  std::sort(pl_surf.points.begin(), pl_surf.points.end(),
+            [](const PointType &a, const PointType &b)
+            {
+              return a.curvature < b.curvature;
+            });
+
+  if (debug_count < 5)
+  {
+    if (pl_surf.empty())
+    {
+      min_curvature = 0.0f;
+      max_curvature = 0.0f;
+    }
+    RCLCPP_INFO(logger,
+                "AUTOWARE frame %d: input=%zu output=%zu filter=%d signed_time=[%d,%d] curvature_ms=[%.3f,%.3f] skipped(channel=%zu, xyz=%zu, blind=%zu)",
+                debug_count + 1, total_points, pl_surf.size(), filter_step, min_time_raw, max_time_raw,
+                min_curvature, max_curvature, invalid_channel_count, invalid_xyz_count, blind_count);
+  }
+  ++debug_count;
+}
+
 
 void Preprocess::default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
 {
