@@ -1,0 +1,29 @@
+/sensor/lidar/top/points:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 10
+
+/sensor/imu/front/data:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 200
+
+/sensor/imu/rear/data:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 200
+
+/tf:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 100
+
+/tf_static:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 100
