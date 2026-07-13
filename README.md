@@ -48,15 +48,25 @@ source install/setup.bash
 ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_front_imu.yaml rviz:=false use_sim_time:=true
 ```
 
-Terminal 2 — rosbag:
+Terminal 2 — full-bag playback:
 
 ```bash
 source /opt/ros/humble/setup.bash
 BAG=~/path-to-the-bag
-ros2 bag play "$BAG" --clock --rate 0.25 \
-  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml \
-  --topics /sensor/lidar/top/points /sensor/imu/front/data /tf /tf_static
+ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
+  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml
 ```
+
+The command replays every topic in the bag. The QoS override is limited to the
+four LiDAR streams and the front IMU input; all remaining topics use their
+recorded QoS profiles. Message packages for any recorded custom types must be
+available in the sourced ROS environment.
+
+The Autoware configurations connect FAST-LIO's `map -> body` estimate to the
+sensor tree rooted at `base_footprint` using the IMU calibration from
+`/tf_static`. Once FAST-LIO initializes, stamped LiDAR, camera, IMU, radar, and
+other sensor topics in that tree can be displayed in RViz with `map` as the
+fixed frame.
 
 Terminal 3 — RViz:
 
@@ -81,3 +91,5 @@ ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_rear_imu.yaml r
 - The required submodule is `include/ikd-Tree`.
 - The RViz config is `rviz_cfg/fastlio_map_ros2.rviz`.
 - This branch expects Autoware-style LiDAR and IMU topics.
+- Full sensor-frame visualization requires the bag's `/tf` and `/tf_static`
+  topics.

@@ -39,6 +39,7 @@
 #include <fstream>
 #include <csignal>
 #include <chrono>
+#include <stdexcept>
 #include <unistd.h>
 #include <Python.h>
 #include <so3_math.h>
@@ -56,7 +57,11 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_srvs/srv/trigger.hpp>
+#include <tf2/exceptions.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/transform_listener.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -835,6 +840,9 @@ public:
         this->declare_parameter<int>("pcd_save.interval", -1);
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
+        this->declare_parameter<bool>("tf.connect_sensor_tree", false);
+        this->declare_parameter<string>("tf.imu_frame", "");
+        this->declare_parameter<string>("tf.base_frame", "");
 
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.effect_map_en", effect_pub_en, false);
@@ -871,6 +879,15 @@ public:
         this->get_parameter_or<int>("pcd_save.interval", pcd_save_interval, -1);
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T", extrinT, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R", extrinR, vector<double>());
+        this->get_parameter_or<bool>("tf.connect_sensor_tree", connect_sensor_tree_, false);
+        this->get_parameter_or<string>("tf.imu_frame", imu_frame_, "");
+        this->get_parameter_or<string>("tf.base_frame", base_frame_, "");
+
+        if (connect_sensor_tree_ && (imu_frame_.empty() || base_frame_.empty()))
+        {
+            throw std::invalid_argument(
+                "tf.imu_frame and tf.base_frame are required when tf.connect_sensor_tree is true");
+        }
 
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type %d", p_pre->lidar_type);
 
@@ -936,6 +953,12 @@ public:
         pubOdomAftMapped_ = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 20);
         pubPath_ = this->create_publisher<nav_msgs::msg::Path>("/path", 20);
         tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+        if (connect_sensor_tree_)
+        {
+            tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+            tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, false);
+            tf_static_broadcaster_ = std::make_unique<tf2_ros::StaticTransformBroadcaster>(*this);
+        }
 
         //------------------------------------------------------------------------------------------------------
         auto period_ms = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / 100.0));
@@ -957,8 +980,39 @@ public:
     }
 
 private:
+    void publish_sensor_tree_bridge()
+    {
+        if (!connect_sensor_tree_ || sensor_tree_connected_)
+        {
+            return;
+        }
+
+        try
+        {
+            auto bridge = tf_buffer_->lookupTransform(imu_frame_, base_frame_, tf2::TimePointZero);
+            bridge.header.stamp = this->get_clock()->now();
+            bridge.header.frame_id = "body";
+            bridge.child_frame_id = base_frame_;
+            tf_static_broadcaster_->sendTransform(bridge);
+            sensor_tree_connected_ = true;
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Connected FAST-LIO frame 'body' to sensor tree '%s' using IMU frame '%s'.",
+                base_frame_.c_str(), imu_frame_.c_str());
+        }
+        catch (const tf2::TransformException & ex)
+        {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 5000,
+                "Waiting for transform %s -> %s: %s",
+                imu_frame_.c_str(), base_frame_.c_str(), ex.what());
+        }
+    }
+
     void timer_callback()
     {
+        publish_sensor_tree_bridge();
+
         if(sync_packages(Measures))
         {
             if (flg_first_scan)
@@ -1141,12 +1195,17 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_pcl_pc_;
     rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_pcl_livox_;
 
+    std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+    std::unique_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::TimerBase::SharedPtr map_pub_timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr map_save_srv_;
 
     bool effect_pub_en = false, map_pub_en = false;
+    bool connect_sensor_tree_ = false, sensor_tree_connected_ = false;
+    string imu_frame_, base_frame_;
     int effect_feat_num = 0, frame_num = 0;
     double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_incre = 0, aver_time_solve = 0, aver_time_const_H_time = 0;
     bool flg_EKF_converged, EKF_stop_flg = 0;

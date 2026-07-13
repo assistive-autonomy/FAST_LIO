@@ -15,6 +15,11 @@
             time_sync_en: false
             time_offset_lidar_to_imu: 0.0
 
+        tf:
+            connect_sensor_tree: true
+            imu_frame: "imu_rear_sensor"
+            base_frame: "base_footprint"
+
         preprocess:
             lidar_type: 5
             scan_line: 128
