@@ -1,0 +1,143 @@
+# Full-topic compatibility overrides for playing Jazzy-recorded MCAP bags with
+# ROS 2 Humble. Every recorded topic is listed because Humble cannot decode the
+# string-valued QoS metadata written by Jazzy.
+
+/robot_description: &reliable_transient_local_depth_1
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 1
+/tf_static: *reliable_transient_local_depth_1
+/vehicle/dbw_enabled: *reliable_transient_local_depth_1
+
+/diagnostics: &reliable_volatile_depth_1
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 1
+/sensor/camera/fsp_l/meta: *reliable_volatile_depth_1
+/sensor/camera/fsp_r/meta: *reliable_volatile_depth_1
+/sensor/camera/lspf_r/meta: *reliable_volatile_depth_1
+/sensor/camera/lspr_l/meta: *reliable_volatile_depth_1
+/sensor/camera/rsp_l/meta: *reliable_volatile_depth_1
+/sensor/camera/rsp_r/meta: *reliable_volatile_depth_1
+/sensor/camera/rspf_l/meta: *reliable_volatile_depth_1
+/sensor/camera/rspr_r/meta: *reliable_volatile_depth_1
+
+/joint_states: &reliable_volatile_depth_10
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 10
+/pdk/vehicle_dynamics_input: *reliable_volatile_depth_10
+/sensor/bms/battery_state: *reliable_volatile_depth_10
+/sensor/camera/fsp_l/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/camera/fsp_r/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/camera/lspf_r/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/camera/lspr_l/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/camera/rsp_l/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/camera/rsp_r/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/camera/rspf_l/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/camera/rspr_r/image_rect_color/compressed: *reliable_volatile_depth_10
+/sensor/lidar/front/points: *reliable_volatile_depth_10
+/sensor/lidar/left/points: *reliable_volatile_depth_10
+/sensor/lidar/right/points: *reliable_volatile_depth_10
+/sensor/lidar/top/points: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_centre/far: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_centre/near: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_centre/status: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_left/far: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_left/near: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_left/status: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_right/far: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_right/near: *reliable_volatile_depth_10
+/sensor/radar/bumper_front_right/status: *reliable_volatile_depth_10
+/sensor/radar/bumper_rear_centre/far: *reliable_volatile_depth_10
+/sensor/radar/bumper_rear_centre/near: *reliable_volatile_depth_10
+/sensor/radar/bumper_rear_centre/status: *reliable_volatile_depth_10
+/sensor/radar/dynamic_object_tracking/markers: *reliable_volatile_depth_10
+/sensor/radar/dynamic_object_tracking/objects: *reliable_volatile_depth_10
+/sensor/radar/roof_left_front/far: *reliable_volatile_depth_10
+/sensor/radar/roof_left_front/near: *reliable_volatile_depth_10
+/sensor/radar/roof_left_front/status: *reliable_volatile_depth_10
+/sensor/radar/roof_left_rear/far: *reliable_volatile_depth_10
+/sensor/radar/roof_left_rear/near: *reliable_volatile_depth_10
+/sensor/radar/roof_left_rear/status: *reliable_volatile_depth_10
+/sensor/radar/roof_right_front/far: *reliable_volatile_depth_10
+/sensor/radar/roof_right_front/near: *reliable_volatile_depth_10
+/sensor/radar/roof_right_front/status: *reliable_volatile_depth_10
+/sensor/radar/roof_right_rear/far: *reliable_volatile_depth_10
+/sensor/radar/roof_right_rear/near: *reliable_volatile_depth_10
+/sensor/radar/roof_right_rear/status: *reliable_volatile_depth_10
+/vehicle/gps/fix: *reliable_volatile_depth_10
+/vehicle/gps/time: *reliable_volatile_depth_10
+/vehicle/gps/vel: *reliable_volatile_depth_10
+/vehicle/imu/data_raw: *reliable_volatile_depth_10
+/vehicle/twist: *reliable_volatile_depth_10
+
+/sensor/gps/psrdop2: &reliable_transient_local_depth_100
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 100
+
+/sensor/gps/bestpos: &reliable_volatile_depth_100
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 100
+/sensor/gps/bestutm: *reliable_volatile_depth_100
+/sensor/gps/bestvel: *reliable_volatile_depth_100
+/sensor/gps/bestxyz: *reliable_volatile_depth_100
+/sensor/gps/dual_antenna_heading: *reliable_volatile_depth_100
+/sensor/gps/gps_fix: *reliable_volatile_depth_100
+/sensor/gps/heading2: *reliable_volatile_depth_100
+/sensor/gps/nav_sat_fix: *reliable_volatile_depth_100
+/sensor/gps/range: *reliable_volatile_depth_100
+/sensor/gps/time: *reliable_volatile_depth_100
+/sensor/gps/trackstat: *reliable_volatile_depth_100
+/sensor/imu/front/data: *reliable_volatile_depth_100
+/sensor/imu/front/ekf/status: *reliable_volatile_depth_100
+/sensor/imu/rear/data: *reliable_volatile_depth_100
+/sensor/imu/rear/ekf/status: *reliable_volatile_depth_100
+/tf: *reliable_volatile_depth_100
+
+/vehicle/brake_info_report: &reliable_volatile_depth_2
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 2
+/vehicle/brake_report: *reliable_volatile_depth_2
+/vehicle/driver_assist_report: *reliable_volatile_depth_2
+/vehicle/fuel_level_report: *reliable_volatile_depth_2
+/vehicle/gear_report: *reliable_volatile_depth_2
+/vehicle/misc_1_report: *reliable_volatile_depth_2
+/vehicle/sonar_cloud: *reliable_volatile_depth_2
+/vehicle/steering_report: *reliable_volatile_depth_2
+/vehicle/surround_report: *reliable_volatile_depth_2
+/vehicle/throttle_info_report: *reliable_volatile_depth_2
+/vehicle/throttle_report: *reliable_volatile_depth_2
+/vehicle/tire_pressure_report: *reliable_volatile_depth_2
+/vehicle/wheel_position_report: *reliable_volatile_depth_2
+/vehicle/wheel_speed_report: *reliable_volatile_depth_2
+
+/sensor/camera/fsp_l/camera_info: &reliable_volatile_depth_4
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 4
+/sensor/camera/fsp_l/image_raw: *reliable_volatile_depth_4
+/sensor/camera/fsp_r/camera_info: *reliable_volatile_depth_4
+/sensor/camera/fsp_r/image_raw: *reliable_volatile_depth_4
+/sensor/camera/lspf_r/camera_info: *reliable_volatile_depth_4
+/sensor/camera/lspf_r/image_raw: *reliable_volatile_depth_4
+/sensor/camera/lspr_l/camera_info: *reliable_volatile_depth_4
+/sensor/camera/lspr_l/image_raw: *reliable_volatile_depth_4
+/sensor/camera/rsp_l/camera_info: *reliable_volatile_depth_4
+/sensor/camera/rsp_l/image_raw: *reliable_volatile_depth_4
+/sensor/camera/rsp_r/camera_info: *reliable_volatile_depth_4
+/sensor/camera/rsp_r/image_raw: *reliable_volatile_depth_4
+/sensor/camera/rspf_l/camera_info: *reliable_volatile_depth_4
+/sensor/camera/rspf_l/image_raw: *reliable_volatile_depth_4
+/sensor/camera/rspr_r/camera_info: *reliable_volatile_depth_4
+/sensor/camera/rspr_r/image_raw: *reliable_volatile_depth_4
