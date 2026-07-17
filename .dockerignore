@@ -1,0 +1,44 @@
+.git
+.github
+.gitignore
+.env
+
+# Local ROS and CMake build products
+build/
+install/
+log/
+**/build/
+**/install/
+**/log/
+CMakeFiles/
+CMakeCache.txt
+
+# Bags and recorded data
+*.mcap
+*.db3
+*.bag
+bags/
+bag/
+rosbags/
+data/
+
+# Generated FAST_LIO output
+Log/**
+PCD/**
+*.pcd
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Do not exclude include/ikd-Tree: the populated submodule is required.

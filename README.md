@@ -104,6 +104,96 @@ Use the rear config in Terminal 1:
 ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_rear_imu.yaml rviz:=false use_sim_time:=true
 ```
 
+## 5. Docker
+
+A prebuilt ROS 2 Humble environment is provided for FAST-LIO2, Livox-SDK2,
+`livox_ros_driver2`, MCAP playback, and RViz. It supports running FAST-LIO,
+rosbag2, and RViz in three shells attached to one container.
+
+### Build the image
+
+Run these commands from the repository root:
+
+```bash
+cd ~/ros2_ws/src/FAST_LIO
+git submodule update --init --recursive
+mkdir -p bags data
+
+export BAG_DIR=/absolute/path/to/your/bag-directory
+export OUTPUT_DIR="$PWD/data"
+export USER_UID="$(id -u)"
+export USER_GID="$(id -g)"
+
+docker compose build workspace
+```
+
+`BAG_DIR` is mounted read-only at `/bags` in the container. For example,
+`$BAG_DIR/Jazzy/recording.mcap` becomes `/bags/Jazzy/recording.mcap`. If bags
+are copied into the repository's `bags/` directory, `BAG_DIR` can be omitted.
+
+### Start the container
+
+```bash
+docker compose up -d workspace
+docker compose ps
+```
+
+Open three host terminals. In each terminal, run:
+
+```bash
+cd ~/ros2_ws/src/FAST_LIO
+docker compose exec workspace bash
+```
+
+ROS 2 Humble, the Livox workspace, and FAST-LIO are sourced automatically in
+every container shell.
+
+Terminal 1 — FAST-LIO:
+
+```bash
+ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_front_imu.yaml rviz:=false use_sim_time:=true
+```
+
+Terminal 2 — Humble-recorded bag:
+
+```bash
+BAG=/bags/recording.mcap
+ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
+  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml
+```
+
+For a Jazzy-recorded MCAP bag, use:
+
+```bash
+BAG=/bags/Jazzy/recording.mcap
+ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
+  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/jazzy_mcap_fastlio_qos.yaml
+```
+
+Terminal 3 — RViz:
+
+First, run this on the host:
+
+```bash
+xhost +SI:localuser:"$(id -un)"
+```
+
+Then run RViz in the third container shell:
+
+```bash
+rviz2 -d ~/ros2_ws/install/fast_lio/share/fast_lio/rviz_cfg/fastlio_map_ros2.rviz
+```
+
+### Stop the container
+
+```bash
+docker compose down
+xhost -SI:localuser:"$(id -un)"
+```
+
+See [docker/README.md](docker/README.md) for validation, troubleshooting,
+output persistence, live Livox hardware, and custom-message details.
+
 
 ## Notes
 

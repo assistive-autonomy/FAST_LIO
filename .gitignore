@@ -7,6 +7,11 @@ Log/*.pdf
 .vscode/settings.json
 PCD/*.pcd
 
+# Local Docker runtime data
+.env
+/bags/
+/data/
+
 # Local backup files
 *.bak
 *.bak_*

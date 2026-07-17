@@ -1,0 +1,40 @@
+services:
+  workspace:
+    image: ${FAST_LIO_IMAGE:-fast-lio2-humble:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USER_NAME: ${CONTAINER_USER:-ros}
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+    init: true
+    stdin_open: true
+    tty: true
+    network_mode: host
+    shm_size: 1gb
+    restart: "no"
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      FAST_LIO_WS: /opt/fast_lio_ws
+      LIVOX_WS: /opt/ws_livox
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ROS_LOCALHOST_ONLY: ${ROS_LOCALHOST_ONLY:-0}
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: ${LIBGL_ALWAYS_SOFTWARE:-1}
+    volumes:
+      - type: bind
+        source: ${BAG_DIR:-./bags}
+        target: /bags
+        read_only: true
+      - type: bind
+        source: ${OUTPUT_DIR:-./data}
+        target: /data
+      - type: bind
+        source: /tmp/.X11-unix
+        target: /tmp/.X11-unix
+        read_only: true
+    command: ["sleep", "infinity"]
