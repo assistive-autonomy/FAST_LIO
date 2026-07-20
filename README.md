@@ -117,19 +117,20 @@ Run these commands from the repository root:
 ```bash
 cd ~/ros2_ws/src/FAST_LIO
 git submodule update --init --recursive
-mkdir -p bags data
+mkdir -p bag data
 
-export BAG_DIR=/absolute/path/to/your/bag-directory
-export OUTPUT_DIR="$PWD/data"
+# Example: copy your bag into the repository's bag/ directory.
+cp /absolute/path/to/bag1.mcap bag/bag1.mcap
+
 export USER_UID="$(id -u)"
 export USER_GID="$(id -g)"
 
 docker compose build workspace
 ```
 
-`BAG_DIR` is mounted read-only at `/bags` in the container. For example,
-`$BAG_DIR/Jazzy/recording.mcap` becomes `/bags/Jazzy/recording.mcap`. If bags
-are copied into the repository's `bags/` directory, `BAG_DIR` can be omitted.
+The repository's `bag/` directory is always mounted read-only at `/bag` in the
+container. Container shells start in `/bag`, so use only the MCAP file name in
+`BAG`; for the example above, use `BAG=bag1.mcap`.
 
 ### Start the container
 
@@ -157,7 +158,7 @@ ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_front_imu.yaml 
 Terminal 2 — Humble-recorded bag:
 
 ```bash
-BAG=/bags/recording.mcap
+BAG=bag1.mcap
 ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
   --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml
 ```
@@ -165,7 +166,7 @@ ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
 For a Jazzy-recorded MCAP bag, use:
 
 ```bash
-BAG=/bags/Jazzy/recording.mcap
+BAG=bag1.mcap
 ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
   --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/jazzy_mcap_fastlio_qos.yaml
 ```

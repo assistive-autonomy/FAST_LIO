@@ -17,7 +17,6 @@ CMakeCache.txt
 *.mcap
 *.db3
 *.bag
-bags/
 bag/
 rosbags/
 data/

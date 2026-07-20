@@ -9,7 +9,7 @@ PCD/*.pcd
 
 # Local Docker runtime data
 .env
-/bags/
+/bag/
 /data/
 
 # Local backup files

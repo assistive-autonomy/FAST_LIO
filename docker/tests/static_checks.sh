@@ -54,7 +54,16 @@ expected='source /opt/ros/humble/setup.bash|source /opt/ws_livox/install/setup.b
 grep -q 'source /etc/fast_lio/setup.bash' docker/entrypoint.sh
 grep -q 'source /etc/fast_lio/setup.bash' Dockerfile
 grep -q 'ln -s /opt/fast_lio_ws.*ros2_ws' Dockerfile
+grep -q '^WORKDIR /bag$' Dockerfile
 grep -q 'command: \["sleep", "infinity"\]' compose.yaml
+grep -q 'source: ./bag' compose.yaml
+grep -q 'target: /bag' compose.yaml
+
+if grep -Eq 'BAG_DIR|OUTPUT_DIR|/bags|\./bags' \
+  compose.yaml docker/README.md Dockerfile .env.example; then
+  echo >&2 "Legacy configurable bag/output mount paths found."
+  exit 6
+fi
 
 if grep -Eqi 'lio[-_ ]?sam|gtsam' \
   Dockerfile compose.yaml docker/entrypoint.sh docker/run_bag.sh \

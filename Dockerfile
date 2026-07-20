@@ -163,7 +163,7 @@ RUN ldconfig \
        fi \
     && HOME_DIR="/home/${USER_NAME}" \
     && mkdir -p \
-         /bags \
+         /bag \
          /data/Log \
          /data/PCD \
          "${XDG_RUNTIME_DIR}" \
@@ -208,7 +208,10 @@ COPY --chmod=0755 docker/run_bag.sh /usr/local/bin/fast-lio-play-bag
 ENV BASH_ENV=/etc/fast_lio/setup.bash
 
 USER ${USER_NAME}
-WORKDIR ${HOME}
+# Compose mounts the repository's ./bag directory here. Starting shells in
+# /bag lets playback commands use only the MCAP filename (for example,
+# BAG=bag1.mcap) instead of repeating the container mount path.
+WORKDIR /bag
 
 ENTRYPOINT ["/usr/local/bin/fast-lio-entrypoint"]
 CMD ["bash"]

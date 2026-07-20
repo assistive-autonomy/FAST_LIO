@@ -27,11 +27,11 @@ services:
       LIBGL_ALWAYS_SOFTWARE: ${LIBGL_ALWAYS_SOFTWARE:-1}
     volumes:
       - type: bind
-        source: ${BAG_DIR:-./bags}
-        target: /bags
+        source: ./bag
+        target: /bag
         read_only: true
       - type: bind
-        source: ${OUTPUT_DIR:-./data}
+        source: ./data
         target: /data
       - type: bind
         source: /tmp/.X11-unix

@@ -7,7 +7,7 @@ starts.
 
 The supported workflow uses one persistent container and three interactive
 shells. Linux host networking allows ROS 2 discovery and Livox UDP traffic,
-while the host bag directory is mounted read-only at `/bags`.
+while the repository's `bag/` directory is mounted read-only at `/bag`.
 
 ## 1. Prepare the repository
 
@@ -30,38 +30,44 @@ test -f include/ikd-Tree/ikd_Tree.cpp
 Docker Engine with the Compose plugin is required. The primary supported host
 is Linux with an X11 or XWayland display for RViz.
 
-## 2. Select the bag and output directories
+## 2. Put the MCAP file in `bag/`
 
-Create the default mount directories in the repository:
+From the repository root, create the `bag/` and `data/` directories:
 
 ```bash
-mkdir -p bags data
+mkdir -p bag data
 ```
 
-The default mapping is:
+Copy the MCAP file into `bag/`. For example, if the file is currently at
+`/absolute/path/to/bag1.mcap`:
+
+```bash
+cp /absolute/path/to/bag1.mcap bag/bag1.mcap
+ls -lh bag/bag1.mcap
+```
+
+The fixed Docker mapping is:
 
 | Host path | Container path | Access |
 | --- | --- | --- |
-| `./bags` | `/bags` | read-only |
+| `./bag` | `/bag` | read-only |
 | `./data` | `/data` | read/write |
 
-To use bags stored elsewhere, export an absolute host directory before
-building and starting the container:
+The container shell starts in `/bag`, so playback commands use only the file
+name. For the example above, set `BAG=bag1.mcap`—not a host path and not
+`/bag/bag1.mcap`.
+
+Set the image user IDs before building so files written to `data/` belong to
+the current host user:
 
 ```bash
-export BAG_DIR=/absolute/path/to/odometry_test
-export OUTPUT_DIR="$PWD/data"
 export USER_UID="$(id -u)"
 export USER_GID="$(id -g)"
 ```
 
-For example, a host file at
-`$BAG_DIR/Jazzy/recording.mcap` is available in the container as
-`/bags/Jazzy/recording.mcap`. Mount the containing directory, not an individual
-MCAP file.
-
-The same values can be kept in a local `.env` file by copying
-`.env.example` and editing it. `.env`, `bags/`, and `data/` are ignored by Git.
+The user IDs and other image/runtime settings can instead be kept in a local
+`.env` file by copying `.env.example` and editing it. `.env`, `bag/`, and
+`data/` are ignored by Git.
 
 ## 3. Build and start
 
@@ -109,7 +115,7 @@ For the rear IMU, use
 For a Humble-recorded bag:
 
 ```bash
-BAG=/bags/recording.mcap
+BAG=bag1.mcap
 ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
   --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml
 ```
@@ -117,7 +123,7 @@ ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
 For a Jazzy-recorded MCAP bag played by Humble:
 
 ```bash
-BAG=/bags/Jazzy/recording.mcap
+BAG=bag1.mcap
 ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
   --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/jazzy_mcap_fastlio_qos.yaml
 ```
@@ -130,8 +136,8 @@ the recorded 105-topic layout used to create it.
 The optional helper selects the same QoS files:
 
 ```bash
-fast-lio-play-bag humble /bags/recording.mcap 0.25
-fast-lio-play-bag jazzy /bags/Jazzy/recording.mcap 0.25
+fast-lio-play-bag humble bag1.mcap 0.25
+fast-lio-play-bag jazzy bag1.mcap 0.25
 ```
 
 ### Terminal 3: RViz
@@ -168,8 +174,8 @@ FAST-LIO's compile-time output locations are connected to the writable mount:
 ~/ros2_ws/src/FAST_LIO/PCD -> /data/PCD
 ```
 
-Files created there persist in `OUTPUT_DIR`. Map/PCD saving remains controlled
-by the selected FAST-LIO configuration.
+Files created there persist in the repository's `data/` directory. Map/PCD
+saving remains controlled by the selected FAST-LIO configuration.
 
 ## 6. Validation
 
@@ -199,7 +205,7 @@ shell:
 
 ```bash
 ~/ros2_ws/src/FAST_LIO/docker/tests/validate_bag.sh \
-  front humble /bags/recording.mcap lidar_top
+  front humble bag1.mcap lidar_top
 ```
 
 Use `rear` for the rear IMU configuration or `jazzy` for a Jazzy-recorded bag.
@@ -233,12 +239,6 @@ Stop the persistent container:
 
 ```bash
 docker compose down
-```
-
-After changing `BAG_DIR`, recreate the container so the new mount is used:
-
-```bash
-docker compose up -d --force-recreate workspace
 ```
 
 Rebuild after changing source code or Docker dependencies:

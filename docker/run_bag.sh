@@ -8,8 +8,8 @@ Usage:
   run_bag.sh jazzy  <bag-path> [rate]
 
 Examples:
-  run_bag.sh humble /bags/run.mcap 0.25
-  run_bag.sh jazzy  /bags/run.mcap 0.25
+  run_bag.sh humble bag1.mcap 0.25
+  run_bag.sh jazzy  bag1.mcap 0.25
 USAGE
   exit 2
 }
