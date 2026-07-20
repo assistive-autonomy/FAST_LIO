@@ -1,206 +1,65 @@
-# FAST_LIO ROS2 AD Branch
+# FAST-LIO2 Jazzy headless bag parser
 
-Custom ROS 2 Humble FAST-LIO branch for Autoware-style topics using the top LiDAR and front/rear IMU configs.
+Branch: `headless`
 
-Branch: `fast_lio_ros2_AD`  
-Repo: `https://github.com/assistive-autonomy/FAST_LIO.git`
+This ROS 2 Jazzy executable reads a bag directly and runs FAST-LIO2 offline.
+It does not play the bag, use RViz, or send sensor data through DDS.
 
-## 1. Clone
-
-```bash
-cd ~/ros2_ws/src
-git clone --recursive -b fast_lio_ros2_AD https://github.com/assistive-autonomy/FAST_LIO.git
-```
-
-If the repo was already cloned without submodules:
+## Build
 
 ```bash
 cd ~/ros2_ws/src/FAST_LIO
-git checkout fast_lio_ros2_AD
+git checkout headless
 git submodule update --init --recursive
-```
 
-Check the submodule:
-
-```bash
-ls include/ikd-Tree/ikd_Tree.cpp
-```
-
-## 2. Build
-
-```bash
 cd ~/ros2_ws
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/ws_livox/install/setup.bash
-colcon build
+colcon build --packages-select fast_lio
 source install/setup.bash
 ```
 
-## 3. Run with front IMU
+## Parse a bag
 
-Terminal 1 — FAST-LIO:
+`--input` accepts an MCAP file or a rosbag2 directory. `--output` must name a
+directory that does not already exist; the parser never overwrites an output.
+`--config` must be a full path.
 
 ```bash
-cd ~/ros2_ws
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/ws_livox/install/setup.bash
-source install/setup.bash
-ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_front_imu.yaml rviz:=false use_sim_time:=true
-```
-
-Terminal 2 — Humble-recorded full-bag playback:
-
-```bash
-source /opt/ros/humble/setup.bash
-BAG=~/path-to-the-bag
-ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
-  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml
-```
-
-The command replays every topic in the bag. The QoS override is limited to the
-four LiDAR streams and the front IMU input; all remaining topics use their
-recorded QoS profiles. Message packages for any recorded custom types must be
-available in the sourced ROS environment.
-
-### Jazzy-recorded MCAP bags on Humble
-
-Jazzy records the offered QoS profiles using string-valued policies, which the
-Humble rosbag2 player cannot decode. For an MCAP bag recorded with Jazzy, use
-the full-topic compatibility override instead:
-
-```bash
-source /opt/ros/humble/setup.bash
-BAG=~/path-to-the-jazzy-recorded-bag.mcap
-ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
-  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/jazzy_mcap_fastlio_qos.yaml
-```
-
-The Jazzy compatibility file covers the complete 105-topic Autoware bag
-layout and makes all four LiDAR publishers reliable. Humble requires an
-override entry for every topic in a Jazzy-recorded bag; if a bag contains an
-additional topic, add that topic to the compatibility file before playback.
-Warnings about ignored custom message types indicate that their message
-packages are not installed and are separate from QoS compatibility.
-
-The Autoware configurations connect FAST-LIO's `map -> body` estimate to the
-sensor tree rooted at `base_footprint` using the IMU calibration from
-`/tf_static`. Once FAST-LIO initializes, stamped LiDAR, camera, IMU, radar, and
-other sensor topics in that tree can be displayed in RViz with `map` as the
-fixed frame.
-
-Terminal 3 — RViz:
-
-```bash
-source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
-rviz2 -d ~/ros2_ws/install/fast_lio/share/fast_lio/rviz_cfg/fastlio_map_ros2.rviz
+
+INPUT=~/data/2026_02_25-12_32_53_dean_village-st_andrew_sq_82/2026_02_25-12_32_53_dean_village-st_andrew_sq_82.mcap
+OUTPUT=~/data/2026_02_25-12_32_53_dean_village-st_andrew_sq_82_fastlio
+CONFIG="$(ros2 pkg prefix fast_lio)/share/fast_lio/config/top_autoware_front_imu.yaml"
+
+ros2 run fast_lio fastlio_headless \
+  --input "$INPUT" \
+  --output "$OUTPUT" \
+  --config "$CONFIG"
 ```
 
-## 4. Run with rear IMU
+The output contains every original serialized bag record with its original
+receive timestamp, send timestamp, payload, topic, and existing `/tf` and
+`/tf_static` messages unchanged. It adds:
 
-Use the rear config in Terminal 1:
+- FAST-LIO `map -> body` transforms on `/tf`
+- the `body -> base_footprint` bridge on `/tf_static`
+- the estimated trajectory on `/path`
+- one final registered scan on `/cloud_registered`
+
+Generated SLAM message headers use the corresponding LiDAR scan timestamps.
+Before reporting success, the parser re-reads both bags in MCAP file order and
+byte-compares every original record's topic, payload, receive timestamp, and
+send timestamp.
+
+## Check the result
 
 ```bash
-ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_rear_imu.yaml rviz:=false use_sim_time:=true
+ros2 bag info "$INPUT"
+ros2 bag info "$OUTPUT"
 ```
 
-## 5. Docker
-
-A prebuilt ROS 2 Humble environment is provided for FAST-LIO2, Livox-SDK2,
-`livox_ros_driver2`, MCAP playback, and RViz. It supports running FAST-LIO,
-rosbag2, and RViz in three shells attached to one container.
-
-### Build the image
-
-Run these commands from the repository root:
-
-```bash
-cd ~/ros2_ws/src/FAST_LIO
-git submodule update --init --recursive
-mkdir -p bag data
-
-# Example: copy your bag into the repository's bag/ directory.
-cp /absolute/path/to/bag1.mcap bag/bag1.mcap
-
-export USER_UID="$(id -u)"
-export USER_GID="$(id -g)"
-
-docker compose build workspace
-```
-
-The repository's `bag/` directory is always mounted read-only at `/bag` in the
-container. Container shells start in `/bag`, so use only the MCAP file name in
-`BAG`; for the example above, use `BAG=bag1.mcap`.
-
-### Start the container
-
-```bash
-docker compose up -d workspace
-docker compose ps
-```
-
-Open three host terminals. In each terminal, run:
-
-```bash
-cd ~/ros2_ws/src/FAST_LIO
-docker compose exec workspace bash
-```
-
-ROS 2 Humble, the Livox workspace, and FAST-LIO are sourced automatically in
-every container shell.
-
-Terminal 1 — FAST-LIO:
-
-```bash
-ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_front_imu.yaml rviz:=false use_sim_time:=true
-```
-
-Terminal 2 — Humble-recorded bag:
-
-```bash
-BAG=bag1.mcap
-ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
-  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml
-```
-
-For a Jazzy-recorded MCAP bag, use:
-
-```bash
-BAG=bag1.mcap
-ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
-  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/jazzy_mcap_fastlio_qos.yaml
-```
-
-Terminal 3 — RViz:
-
-First, run this on the host:
-
-```bash
-xhost +SI:localuser:"$(id -un)"
-```
-
-Then run RViz in the third container shell:
-
-```bash
-rviz2 -d ~/ros2_ws/install/fast_lio/share/fast_lio/rviz_cfg/fastlio_map_ros2.rviz
-```
-
-### Stop the container
-
-```bash
-docker compose down
-xhost -SI:localuser:"$(id -un)"
-```
-
-See [docker/README.md](docker/README.md) for validation, troubleshooting,
-output persistence, live Livox hardware, and custom-message details.
-
-
-## Notes
-
-- Always clone with `--recursive`, or run `git submodule update --init --recursive` after cloning.
-- The required submodule is `include/ikd-Tree`.
-- The RViz config is `rviz_cfg/fastlio_map_ros2.rviz`.
-- This branch expects Autoware-style LiDAR and IMU topics.
-- Full sensor-frame visualization requires the bag's `/tf` and `/tf_static`
-  topics.
+The original topic counts in the output must match the input; only `/tf`,
+`/tf_static`, `/path`, and `/cloud_registered` gain generated records.

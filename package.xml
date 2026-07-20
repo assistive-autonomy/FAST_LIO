@@ -27,10 +27,14 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>pcl_ros</depend>
+  <depend>tf2_msgs</depend>
   <depend>pcl_conversions</depend>
   <depend>livox_ros_driver2</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosbag2_storage</depend>
 
   <exec_depend>rosidl_default_runtime</exec_depend>
+  <exec_depend>rosbag2_storage_mcap</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
 
   <export>
