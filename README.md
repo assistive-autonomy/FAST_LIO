@@ -1,8 +1,8 @@
-# FAST-LIO2 Jazzy headless bag parser
+# FAST-LIO2 Humble headless bag parser
 
 Branch: `headless`
 
-This ROS 2 Jazzy executable reads a bag directly and runs FAST-LIO2 offline.
+This ROS 2 Humble executable reads an MCAP bag directly and runs FAST-LIO2 offline.
 It does not play the bag, use RViz, or send sensor data through DDS.
 
 ## Build
@@ -13,7 +13,7 @@ git checkout headless
 git submodule update --init --recursive
 
 cd ~/ros2_ws
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
 colcon build --packages-select fast_lio
 source install/setup.bash
@@ -26,7 +26,7 @@ directory that does not already exist; the parser never overwrites an output.
 `--config` must be a full path.
 
 ```bash
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
 source ~/ros2_ws/install/setup.bash
 
@@ -41,7 +41,7 @@ ros2 run fast_lio fastlio_headless \
 ```
 
 The output contains every original serialized bag record with its original
-receive timestamp, send timestamp, payload, topic, and existing `/tf` and
+payload, topic, single Humble rosbag timestamp, and existing `/tf` and
 `/tf_static` messages unchanged. It adds:
 
 - FAST-LIO `map -> body` transforms on `/tf`
@@ -51,9 +51,14 @@ receive timestamp, send timestamp, payload, topic, and existing `/tf` and
   `/cloud_registered`
 
 Generated SLAM message headers use the corresponding LiDAR scan timestamps.
-Before reporting success, the parser re-reads both bags in MCAP file order and
-byte-compares every original record's topic, payload, receive timestamp, and
-send timestamp.
+Before reporting success, the parser re-reads both bags in ROS 2 storage order
+and byte-compares every original record's topic, payload, and rosbag timestamp.
+
+The parser feeds deserialized messages directly into FAST-LIO, so DDS QoS does
+not affect transformation. The normal `fastlio_mapping` executable keeps the
+Humble branch's QoS: `SensorDataQoS` for standard point clouds, the default
+reliable depth-10 IMU subscription, and the existing queue depths for Livox and
+published point clouds.
 
 ## Check the result
 
@@ -77,7 +82,7 @@ ready for the simulated clock.
 Terminal 1:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
 source ~/ros2_ws/install/setup.bash
 
@@ -88,14 +93,14 @@ rviz2 -d "$RVIZ_CONFIG" --ros-args -p use_sim_time:=true
 Terminal 2:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 source ~/ws_livox/install/setup.bash
 source ~/ros2_ws/install/setup.bash
 
 OUTPUT=~/data/2026_02_25-12_32_53_dean_village-st_andrew_sq_82_fastlio
 QOS="$(ros2 pkg prefix fast_lio)/share/fast_lio/config/headless_rviz_playback_qos.yaml"
 
-ros2 bag play "$OUTPUT" --clock --rate 1.0 \
+ros2 bag play -s mcap "$OUTPUT" --clock --rate 1.0 \
   --qos-profile-overrides-path "$QOS" \
   --topics \
     /sensor/lidar/top/points \
@@ -106,10 +111,13 @@ ros2 bag play "$OUTPUT" --clock --rate 1.0 \
 ```
 
 Filtering the playback prevents unrelated high-bandwidth camera and radar data
-from competing with RViz. The profile gives every raw LiDAR display `Best
-Effort`, `Keep Last`, depth `1`, matching the player overrides. A 10 Hz LiDAR
-therefore updates at 10 Hz wall time; using `--rate 0.25` intentionally reduces
-that to 2.5 Hz.
+from competing with RViz. The player overrides raw LiDAR streams to Humble's
+reliable, volatile, `Keep Last(10)` convention from
+`config/fastlio_playback_qos.yaml`; RViz requests `Best Effort`, `Keep Last(1)`
+for responsive visual display, which is compatible with a reliable publisher.
+The generated `/cloud_registered` stream remains best effort with depth 1. A
+10 Hz LiDAR therefore updates at 10 Hz wall time; using `--rate 0.25`
+intentionally reduces that to 2.5 Hz.
 
 For a world-fixed SLAM view, load `fastlio_headless_map.rviz` instead. That
 profile displays the smaller, de-skewed `/cloud_registered` stream in `map` and

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -19,13 +20,10 @@
 #include <rclcpp/serialized_message.hpp>
 #include <rclcpp/time.hpp>
 #include <rosbag2_cpp/converter_options.hpp>
-#include <rosbag2_cpp/message_definitions/local_message_definition_source.hpp>
 #include <rosbag2_cpp/reader.hpp>
 #include <rosbag2_cpp/writer.hpp>
 #include <rosbag2_storage/bag_metadata.hpp>
-#include <rosbag2_storage/message_definition.hpp>
 #include <rosbag2_storage/serialized_bag_message.hpp>
-#include <rosbag2_storage/storage_interfaces/base_read_interface.hpp>
 #include <rosbag2_storage/storage_options.hpp>
 #include <rosbag2_storage/topic_metadata.hpp>
 #include <rosidl_runtime_cpp/traits.hpp>
@@ -154,8 +152,8 @@ typename MessageT::UniquePtr deserialize_copy(
     serializer.deserialize_message(&serialized_copy, message.get());
   } catch (const std::exception & error) {
     throw std::runtime_error(
-            "could not deserialize '" + source.topic_name + "' at receive timestamp " +
-            std::to_string(source.recv_timestamp) + ": " + error.what());
+            "could not deserialize '" + source.topic_name + "' at bag timestamp " +
+            std::to_string(source.time_stamp) + ": " + error.what());
   }
   return message;
 }
@@ -163,38 +161,48 @@ typename MessageT::UniquePtr deserialize_copy(
 template<typename MessageT>
 void write_generated(
   rosbag2_cpp::Writer & writer, const MessageT & message, const std::string & topic,
-  rcutils_time_point_value_t recv_timestamp, rcutils_time_point_value_t send_timestamp)
+  rcutils_time_point_value_t timestamp)
 {
   auto serialized = std::make_shared<rclcpp::SerializedMessage>();
   rclcpp::Serialization<MessageT> serializer;
   serializer.serialize_message(&message, serialized.get());
   writer.write(
-    serialized, topic, rosidl_generator_traits::name<MessageT>(), recv_timestamp, send_timestamp);
+    serialized, topic, rosidl_generator_traits::name<MessageT>(),
+    rclcpp::Time(timestamp, RCL_ROS_TIME));
+}
+
+std::string serialize_qos(const rclcpp::QoS & qos)
+{
+  const auto & profile = qos.get_rmw_qos_profile();
+  std::ostringstream stream;
+  stream << "- history: " << static_cast<int>(profile.history) << "\n"
+         << "  depth: " << profile.depth << "\n"
+         << "  reliability: " << static_cast<int>(profile.reliability) << "\n"
+         << "  durability: " << static_cast<int>(profile.durability) << "\n"
+         << "  deadline:\n"
+         << "    sec: " << profile.deadline.sec << "\n"
+         << "    nsec: " << profile.deadline.nsec << "\n"
+         << "  lifespan:\n"
+         << "    sec: " << profile.lifespan.sec << "\n"
+         << "    nsec: " << profile.lifespan.nsec << "\n"
+         << "  liveliness: " << static_cast<int>(profile.liveliness) << "\n"
+         << "  liveliness_lease_duration:\n"
+         << "    sec: " << profile.liveliness_lease_duration.sec << "\n"
+         << "    nsec: " << profile.liveliness_lease_duration.nsec << "\n"
+         << "  avoid_ros_namespace_conventions: "
+         << (profile.avoid_ros_namespace_conventions ? "true" : "false") << "\n";
+  return stream.str();
 }
 
 rosbag2_storage::TopicMetadata make_topic(
-  const std::string & name, const std::string & type, const rclcpp::QoS & qos,
-  const rosbag2_storage::MessageDefinition & definition)
+  const std::string & name, const std::string & type, const rclcpp::QoS & qos)
 {
   rosbag2_storage::TopicMetadata metadata;
   metadata.name = name;
   metadata.type = type;
   metadata.serialization_format = kCdrFormat;
-  metadata.offered_qos_profiles.push_back(qos);
-  metadata.type_description_hash = definition.type_hash;
+  metadata.offered_qos_profiles = serialize_qos(qos);
   return metadata;
-}
-
-const rosbag2_storage::MessageDefinition & find_definition(
-  const std::unordered_map<std::string, rosbag2_storage::MessageDefinition> & definitions,
-  const std::string & type, rosbag2_storage::MessageDefinition & empty_fallback)
-{
-  const auto definition = definitions.find(type);
-  if (definition != definitions.end()) {
-    return definition->second;
-  }
-  empty_fallback = rosbag2_storage::MessageDefinition::empty_message_definition_for(type);
-  return empty_fallback;
 }
 
 void require_topic_type(
@@ -244,8 +252,7 @@ bool same_serialized_record(
   const rosbag2_storage::SerializedBagMessage & actual)
 {
   if (expected.topic_name != actual.topic_name ||
-    expected.recv_timestamp != actual.recv_timestamp ||
-    expected.send_timestamp != actual.send_timestamp ||
+    expected.time_stamp != actual.time_stamp ||
     !expected.serialized_data || !actual.serialized_data)
   {
     return false;
@@ -280,12 +287,6 @@ PassthroughVerification verify_passthrough(
   rosbag2_cpp::Reader output_reader;
   input_reader.open(input_storage, rosbag2_cpp::ConverterOptions{});
   output_reader.open(output_storage, rosbag2_cpp::ConverterOptions{});
-  const rosbag2_storage::ReadOrder file_order(
-    rosbag2_storage::ReadOrder::File, false);
-  if (!input_reader.set_read_order(file_order) || !output_reader.set_read_order(file_order)) {
-    throw std::runtime_error("could not verify preservation in original MCAP file order");
-  }
-
   PassthroughVerification verification;
   while (input_reader.has_next()) {
     const auto expected = input_reader.read_next();
@@ -400,12 +401,6 @@ int transform_bag(const Options & options, SlamEngine & engine)
     reader.open(input_storage, rosbag2_cpp::ConverterOptions{});
     reader_open = true;
 
-    if (!reader.set_read_order(
-        rosbag2_storage::ReadOrder(rosbag2_storage::ReadOrder::File, false)))
-    {
-      throw std::runtime_error("the MCAP reader cannot provide original file order");
-    }
-
     const auto input_metadata = reader.get_metadata();
     auto input_topics = reader.get_all_topics_and_types();
     std::unordered_map<std::string, rosbag2_storage::TopicMetadata> topics_by_name;
@@ -458,21 +453,10 @@ int transform_bag(const Options & options, SlamEngine & engine)
       throw std::runtime_error("selected IMU topic contains no messages: " + engine.imu_topic());
     }
 
-    std::vector<rosbag2_storage::MessageDefinition> input_definitions;
-    reader.get_all_message_definitions(input_definitions);
-    std::unordered_map<std::string, rosbag2_storage::MessageDefinition> definitions_by_type;
-    for (auto & definition : input_definitions) {
-      definitions_by_type.try_emplace(definition.topic_type, std::move(definition));
-    }
-
-    rosbag2_cpp::LocalMessageDefinitionSource local_definitions;
     const std::string tf_type = rosidl_generator_traits::name<tf2_msgs::msg::TFMessage>();
     const std::string path_type = rosidl_generator_traits::name<nav_msgs::msg::Path>();
     const std::string cloud_type =
       rosidl_generator_traits::name<sensor_msgs::msg::PointCloud2>();
-    const auto tf_definition = local_definitions.get_full_text(tf_type);
-    const auto path_definition = local_definitions.get_full_text(path_type);
-    const auto cloud_definition = local_definitions.get_full_text(cloud_type);
 
     rosbag2_storage::StorageOptions output_storage;
     output_storage.uri = options.output_uri;
@@ -482,42 +466,37 @@ int transform_bag(const Options & options, SlamEngine & engine)
     writer_open = true;
 
     for (const auto & topic : input_topics) {
-      rosbag2_storage::MessageDefinition empty_definition;
-      writer.create_topic(
-        topic, find_definition(definitions_by_type, topic.type, empty_definition));
+      writer.create_topic(topic);
     }
 
     if (topics_by_name.count(kTfTopic) == 0U) {
       rclcpp::QoS qos(rclcpp::KeepLast(100));
       qos.reliable().durability_volatile();
-      writer.create_topic(make_topic(kTfTopic, tf_type, qos, tf_definition), tf_definition);
+      writer.create_topic(make_topic(kTfTopic, tf_type, qos));
     }
     if (topics_by_name.count(kTfStaticTopic) == 0U) {
       rclcpp::QoS qos(rclcpp::KeepLast(1));
       qos.reliable().transient_local();
-      writer.create_topic(
-        make_topic(kTfStaticTopic, tf_type, qos, tf_definition), tf_definition);
+      writer.create_topic(make_topic(kTfStaticTopic, tf_type, qos));
     }
     {
       rclcpp::QoS qos(rclcpp::KeepLast(1));
       qos.reliable().durability_volatile();
-      writer.create_topic(make_topic(kPathTopic, path_type, qos, path_definition), path_definition);
+      writer.create_topic(make_topic(kPathTopic, path_type, qos));
     }
     {
       rclcpp::QoS qos(rclcpp::KeepLast(1));
       qos.best_effort().durability_volatile();
-      writer.create_topic(
-        make_topic(kRegisteredCloudTopic, cloud_type, qos, cloud_definition), cloud_definition);
+      writer.create_topic(make_topic(kRegisteredCloudTopic, cloud_type, qos));
     }
 
     tf2::BufferCore static_tf_buffer;
     bool bridge_written = false;
     nav_msgs::msg::Path cumulative_path;
-    rcutils_time_point_value_t final_solution_recv_timestamp = 0;
-    rcutils_time_point_value_t final_solution_send_timestamp = 0;
+    rcutils_time_point_value_t final_solution_timestamp = 0;
 
     std::cout << "Reading " << input_metadata.message_count
-              << " input records in original MCAP file order..." << std::endl;
+              << " input records in ROS 2 storage order..." << std::endl;
 
     while (reader.has_next()) {
       auto source = reader.read_next();
@@ -529,9 +508,8 @@ int transform_bag(const Options & options, SlamEngine & engine)
                 "record refers to a topic without metadata: " + source->topic_name);
       }
 
-      // This exact reader-owned object is written first. In particular, its serialized payload,
-      // receive timestamp, send timestamp, topic name, and position relative to every other input
-      // record are not modified.
+      // This exact reader-owned object is written first. Its serialized payload, topic name, and
+      // Humble rosbag timestamp are not modified.
       writer.write(source);
       ++copied_records;
       ++copied_by_topic[source->topic_name];
@@ -542,7 +520,7 @@ int transform_bag(const Options & options, SlamEngine & engine)
           if (!static_tf_buffer.setTransform(transform, "fastlio_headless_input", true)) {
             std::cerr << "Warning: ignored invalid static transform "
                       << transform.header.frame_id << " -> " << transform.child_frame_id
-                      << " at receive timestamp " << source->recv_timestamp << std::endl;
+                      << " at bag timestamp " << source->time_stamp << std::endl;
           }
         }
 
@@ -554,14 +532,13 @@ int transform_bag(const Options & options, SlamEngine & engine)
             bridge.child_frame_id = engine.base_frame();
             if (stamp_is_zero(bridge.header.stamp)) {
               bridge.header.stamp = static_cast<builtin_interfaces::msg::Time>(
-                rclcpp::Time(source->recv_timestamp, RCL_ROS_TIME));
+                rclcpp::Time(source->time_stamp, RCL_ROS_TIME));
             }
 
             tf2_msgs::msg::TFMessage generated_bridge;
             generated_bridge.transforms.push_back(std::move(bridge));
             write_generated(
-              writer, generated_bridge, kTfStaticTopic,
-              source->recv_timestamp, source->send_timestamp);
+              writer, generated_bridge, kTfStaticTopic, source->time_stamp);
             bridge_written = true;
             ++bridge_records;
           } catch (const tf2::TransformException &) {
@@ -607,13 +584,11 @@ int transform_bag(const Options & options, SlamEngine & engine)
         tf2_msgs::msg::TFMessage tf_message;
         tf_message.transforms.push_back(std::move(solution.map_to_body));
         write_generated(
-          writer, tf_message, kTfTopic, source->recv_timestamp, source->send_timestamp);
+          writer, tf_message, kTfTopic, source->time_stamp);
         write_generated(
-          writer, solution.registered_cloud, kRegisteredCloudTopic,
-          source->recv_timestamp, source->send_timestamp);
+          writer, solution.registered_cloud, kRegisteredCloudTopic, source->time_stamp);
         ++registered_cloud_records;
-        final_solution_recv_timestamp = source->recv_timestamp;
-        final_solution_send_timestamp = source->send_timestamp;
+        final_solution_timestamp = source->time_stamp;
       }
     }
 
@@ -644,12 +619,11 @@ int transform_bag(const Options & options, SlamEngine & engine)
     }
 
     // The result bag contains one cumulative trajectory. Its ROS header stamp remains the last
-    // solved LiDAR scan time; its bag timestamps are the receive/send timestamps of the source
-    // record that produced that solution. Registered clouds were written beside each solution so
-    // playback preserves the normal live FAST-LIO scan cadence.
+    // solved LiDAR scan time; its Humble rosbag timestamp is copied from the source record that
+    // produced that solution. Registered clouds are written beside each solution so playback
+    // preserves the normal live FAST-LIO scan cadence.
     write_generated(
-      writer, cumulative_path, kPathTopic,
-      final_solution_recv_timestamp, final_solution_send_timestamp);
+      writer, cumulative_path, kPathTopic, final_solution_timestamp);
 
     writer.close();
     writer_open = false;
@@ -675,9 +649,9 @@ int transform_bag(const Options & options, SlamEngine & engine)
 
   std::cout << "Headless FAST-LIO bag transform complete\n"
             << "  copied input records: " << copied_records
-            << " (serialized payloads and receive/send timestamps unchanged)\n"
+            << " (serialized payloads and Humble rosbag timestamps unchanged)\n"
             << "  verified input records: " << verification.original_records
-            << " (exact topic, payload, receive/send timestamp, and input order)\n"
+            << " (exact topic, payload, timestamp, and storage order)\n"
             << "  lidar records fed:   " << lidar_records << "\n"
             << "  IMU records fed:     " << imu_records << "\n"
             << "  SLAM solutions:      " << solution_records << "\n"

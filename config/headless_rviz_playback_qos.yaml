@@ -1,27 +1,28 @@
-# QoS offered by ros2 bag play for visualizing a headless FAST-LIO output bag.
-# The raw sensors use lossy, latest-sample delivery; TF remains reliable.
+# QoS offered by ros2 bag play for a headless FAST-LIO output bag on Humble.
+# Raw LiDAR mirrors config/fastlio_playback_qos.yaml; generated point clouds
+# retain SensorDataQoS-style latest-sample delivery, and TF remains reliable.
 /sensor/lidar/top/points:
   history: keep_last
-  depth: 1
-  reliability: best_effort
+  depth: 10
+  reliability: reliable
   durability: volatile
 
 /sensor/lidar/front/points:
   history: keep_last
-  depth: 1
-  reliability: best_effort
+  depth: 10
+  reliability: reliable
   durability: volatile
 
 /sensor/lidar/left/points:
   history: keep_last
-  depth: 1
-  reliability: best_effort
+  depth: 10
+  reliability: reliable
   durability: volatile
 
 /sensor/lidar/right/points:
   history: keep_last
-  depth: 1
-  reliability: best_effort
+  depth: 10
+  reliability: reliable
   durability: volatile
 
 /cloud_registered:
