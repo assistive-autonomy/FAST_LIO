@@ -63,3 +63,43 @@ ros2 bag info "$OUTPUT"
 
 The original topic counts in the output must match the input; only `/tf`,
 `/tf_static`, `/path`, and `/cloud_registered` gain generated records.
+
+## Play and view the output bag
+
+The supplied RViz profile uses `map` as its fixed frame and enables the top,
+front, left, and right raw LiDAR topics. Start RViz first so it is ready for
+the simulated clock.
+
+Terminal 1:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/ws_livox/install/setup.bash
+source ~/ros2_ws/install/setup.bash
+
+RVIZ_CONFIG="$(ros2 pkg prefix fast_lio)/share/fast_lio/rviz_cfg/fastlio_headless_map.rviz"
+rviz2 -d "$RVIZ_CONFIG" --ros-args -p use_sim_time:=true
+```
+
+Terminal 2:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/ws_livox/install/setup.bash
+source ~/ros2_ws/install/setup.bash
+
+OUTPUT=~/data/2026_02_25-12_32_53_dean_village-st_andrew_sq_82_fastlio
+QOS="$(ros2 pkg prefix fast_lio)/share/fast_lio/config/headless_rviz_playback_qos.yaml"
+
+ros2 bag play -s mcap "$OUTPUT" --clock --rate 0.25 \
+  --qos-profile-overrides-path "$QOS"
+```
+
+The profile gives every raw LiDAR display `Best Effort`, `Keep Last`, depth
+`1`, matching the player overrides. The final registered scan and the full
+path appear near the end of playback; raw LiDAR frames become map-transformable
+once FAST-LIO has initialized.
+
+The player can warn that unrelated camera, radar, GPS, or vehicle topics have
+missing custom message packages. Those topics are skipped; the four LiDARs,
+`/tf`, `/tf_static`, `/path`, and `/cloud_registered` still play normally.

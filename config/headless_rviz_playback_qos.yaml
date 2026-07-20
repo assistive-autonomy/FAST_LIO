@@ -1,0 +1,51 @@
+# QoS offered by ros2 bag play for visualizing a headless FAST-LIO output bag.
+# The raw sensors use lossy, latest-sample delivery; TF remains reliable.
+/sensor/lidar/top/points:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile
+
+/sensor/lidar/front/points:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile
+
+/sensor/lidar/left/points:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile
+
+/sensor/lidar/right/points:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile
+
+/cloud_registered:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile
+
+/path:
+  history: keep_last
+  depth: 1
+  reliability: reliable
+  durability: volatile
+
+/tf:
+  history: keep_last
+  depth: 100
+  reliability: reliable
+  durability: volatile
+
+/tf_static:
+  history: keep_last
+  # Retain the generated body -> base_footprint bridge as well as the bag's
+  # repeated static-tree messages for RViz instances that join after playback.
+  depth: 300
+  reliability: reliable
+  durability: transient_local
