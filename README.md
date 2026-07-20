@@ -47,7 +47,8 @@ receive timestamp, send timestamp, payload, topic, and existing `/tf` and
 - FAST-LIO `map -> body` transforms on `/tf`
 - the `body -> base_footprint` bridge on `/tf_static`
 - the estimated trajectory on `/path`
-- one final registered scan on `/cloud_registered`
+- one downsampled, de-skewed registered scan per FAST-LIO solution on
+  `/cloud_registered`
 
 Generated SLAM message headers use the corresponding LiDAR scan timestamps.
 Before reporting success, the parser re-reads both bags in MCAP file order and
@@ -66,9 +67,12 @@ The original topic counts in the output must match the input; only `/tf`,
 
 ## Play and view the output bag
 
-The supplied RViz profile uses `map` as its fixed frame and enables the top,
-front, left, and right raw LiDAR topics. Start RViz first so it is ready for
-the simulated clock.
+The headless parser has already run FAST-LIO, so playback does not need to be
+slowed down to let a mapping node catch up. The default RViz profile uses
+`lidar_top` as its fixed frame and enables the top, front, left, and right raw
+LiDAR topics. This vehicle-fixed view displays raw scans immediately without
+waiting for the time-varying `map -> body` transform. Start RViz first so it is
+ready for the simulated clock.
 
 Terminal 1:
 
@@ -77,7 +81,7 @@ source /opt/ros/jazzy/setup.bash
 source ~/ws_livox/install/setup.bash
 source ~/ros2_ws/install/setup.bash
 
-RVIZ_CONFIG="$(ros2 pkg prefix fast_lio)/share/fast_lio/rviz_cfg/fastlio_headless_map.rviz"
+RVIZ_CONFIG="$(ros2 pkg prefix fast_lio)/share/fast_lio/rviz_cfg/fastlio_headless_sensor.rviz"
 rviz2 -d "$RVIZ_CONFIG" --ros-args -p use_sim_time:=true
 ```
 
@@ -91,15 +95,29 @@ source ~/ros2_ws/install/setup.bash
 OUTPUT=~/data/2026_02_25-12_32_53_dean_village-st_andrew_sq_82_fastlio
 QOS="$(ros2 pkg prefix fast_lio)/share/fast_lio/config/headless_rviz_playback_qos.yaml"
 
-ros2 bag play -s mcap "$OUTPUT" --clock --rate 0.25 \
-  --qos-profile-overrides-path "$QOS"
+ros2 bag play "$OUTPUT" --clock --rate 1.0 \
+  --qos-profile-overrides-path "$QOS" \
+  --topics \
+    /sensor/lidar/top/points \
+    /sensor/lidar/front/points \
+    /sensor/lidar/left/points \
+    /sensor/lidar/right/points \
+    /tf /tf_static /path /cloud_registered
 ```
 
-The profile gives every raw LiDAR display `Best Effort`, `Keep Last`, depth
-`1`, matching the player overrides. The final registered scan and the full
-path appear near the end of playback; raw LiDAR frames become map-transformable
-once FAST-LIO has initialized.
+Filtering the playback prevents unrelated high-bandwidth camera and radar data
+from competing with RViz. The profile gives every raw LiDAR display `Best
+Effort`, `Keep Last`, depth `1`, matching the player overrides. A 10 Hz LiDAR
+therefore updates at 10 Hz wall time; using `--rate 0.25` intentionally reduces
+that to 2.5 Hz.
 
-The player can warn that unrelated camera, radar, GPS, or vehicle topics have
-missing custom message packages. Those topics are skipped; the four LiDARs,
-`/tf`, `/tf_static`, `/path`, and `/cloud_registered` still play normally.
+For a world-fixed SLAM view, load `fastlio_headless_map.rviz` instead. That
+profile displays the smaller, de-skewed `/cloud_registered` stream in `map` and
+leaves the four full-density raw scans disabled by default. The full cumulative
+path appears near the end of playback by design. Raw scans enabled manually in
+the map profile can briefly wait for stamped TF during initialization or at the
+newest edge of the trajectory.
+
+Unfiltered playback can warn that unrelated camera, radar, GPS, or vehicle
+topics have missing custom message packages. Those topics are irrelevant to
+this visualization and are excluded by the command above.

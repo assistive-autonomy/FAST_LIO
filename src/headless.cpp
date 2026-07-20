@@ -388,6 +388,7 @@ int transform_bag(const Options & options, SlamEngine & engine)
   std::uint64_t lidar_records = 0;
   std::uint64_t imu_records = 0;
   std::uint64_t solution_records = 0;
+  std::uint64_t registered_cloud_records = 0;
   std::uint64_t bridge_records = 0;
   PassthroughVerification verification;
   std::unordered_map<std::string, std::uint64_t> copied_by_topic;
@@ -512,7 +513,6 @@ int transform_bag(const Options & options, SlamEngine & engine)
     tf2::BufferCore static_tf_buffer;
     bool bridge_written = false;
     nav_msgs::msg::Path cumulative_path;
-    sensor_msgs::msg::PointCloud2 final_registered_cloud;
     rcutils_time_point_value_t final_solution_recv_timestamp = 0;
     rcutils_time_point_value_t final_solution_send_timestamp = 0;
 
@@ -608,7 +608,10 @@ int transform_bag(const Options & options, SlamEngine & engine)
         tf_message.transforms.push_back(std::move(solution.map_to_body));
         write_generated(
           writer, tf_message, kTfTopic, source->recv_timestamp, source->send_timestamp);
-        final_registered_cloud = std::move(solution.registered_cloud);
+        write_generated(
+          writer, solution.registered_cloud, kRegisteredCloudTopic,
+          source->recv_timestamp, source->send_timestamp);
+        ++registered_cloud_records;
         final_solution_recv_timestamp = source->recv_timestamp;
         final_solution_send_timestamp = source->send_timestamp;
       }
@@ -640,12 +643,10 @@ int transform_bag(const Options & options, SlamEngine & engine)
               engine.imu_frame() + "' to '" + engine.base_frame() + "'");
     }
 
-    // The result bag intentionally contains one cumulative trajectory and one final registered
-    // scan. Their ROS header stamps remain the last solved LiDAR scan time; their bag timestamps
-    // are the receive/send timestamps of the source record that produced that solution.
-    write_generated(
-      writer, final_registered_cloud, kRegisteredCloudTopic,
-      final_solution_recv_timestamp, final_solution_send_timestamp);
+    // The result bag contains one cumulative trajectory. Its ROS header stamp remains the last
+    // solved LiDAR scan time; its bag timestamps are the receive/send timestamps of the source
+    // record that produced that solution. Registered clouds were written beside each solution so
+    // playback preserves the normal live FAST-LIO scan cadence.
     write_generated(
       writer, cumulative_path, kPathTopic,
       final_solution_recv_timestamp, final_solution_send_timestamp);
@@ -682,7 +683,7 @@ int transform_bag(const Options & options, SlamEngine & engine)
             << "  SLAM solutions:      " << solution_records << "\n"
             << "  generated /tf:       " << solution_records << "\n"
             << "  generated /path:     1 (cumulative)\n"
-            << "  registered scans:    1 (final)\n"
+            << "  registered scans:    " << registered_cloud_records << "\n"
             << "  generated /tf_static:" << bridge_records << "\n"
             << "  all generated records: " << verification.generated_records << "\n"
             << "  output: " << options.output_uri << std::endl;
