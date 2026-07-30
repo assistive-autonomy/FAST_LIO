@@ -93,22 +93,62 @@ Terminal 3 — RViz:
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
-rviz2 -d ~/ros2_ws/install/fast_lio/share/fast_lio/rviz_cfg/fastlio_map_ros2.rviz
+RVIZ_CONFIG="$(ros2 pkg prefix fast_lio)/share/fast_lio/rviz_cfg/fastlio_map_ros2.rviz"
+rviz2 -d "$RVIZ_CONFIG" --ros-args -p use_sim_time:=true
 ```
 
 ### Optional cumulative SLAM map
 
 RViz now treats `/cloud_registered` as the latest registered scan only. To
 also build and display a cumulative point-cloud map for the complete run,
-enable the optional `/slam` output:
+use the following three-terminal workflow. RViz is launched separately so it
+uses the bag's simulated clock. The large-data transport setting must be
+exported in every terminal before starting any ROS process.
+
+Terminal 1 — FAST-LIO with cumulative `/slam` output:
 
 ```bash
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source ~/ws_livox/install/setup.bash
+source install/setup.bash
+export FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA
+
 ros2 launch fast_lio mapping.launch.py \
   config_file:=top_autoware_front_imu.yaml \
-  rviz:=true \
+  rviz:=false \
   use_sim_time:=true \
   slam:=true
 ```
+
+Terminal 2 — RViz using simulated time:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+export FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA
+
+RVIZ_CONFIG="$(ros2 pkg prefix fast_lio)/share/fast_lio/rviz_cfg/fastlio_map_ros2.rviz"
+rviz2 -d "$RVIZ_CONFIG" --ros-args -p use_sim_time:=true
+```
+
+Terminal 3 — input-bag playback:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/ws_livox/install/setup.bash
+source ~/ros2_ws/install/setup.bash
+export FASTDDS_BUILTIN_TRANSPORTS=LARGE_DATA
+
+BAG=~/path-to-the-bag
+ros2 bag play -s mcap "$BAG" --clock --rate 0.25 \
+  --qos-profile-overrides-path ~/ros2_ws/src/FAST_LIO/config/fastlio_playback_qos.yaml
+```
+
+Start a fresh set of all three processes before replaying a bag. This resets
+the TF buffers, simulated clock, and cumulative map. Warnings about ignored
+topics only mean that optional custom-message packages for those unrelated
+bag topics are not installed.
 
 When `slam:=false` (the default), FAST-LIO does not create the `/slam`
 publisher or accumulate map points. When enabled, every successfully
