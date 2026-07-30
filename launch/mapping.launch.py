@@ -8,6 +8,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch.conditions import IfCondition
 
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -21,6 +22,7 @@ def generate_launch_description():
     config_file = LaunchConfiguration('config_file')
     rviz_use = LaunchConfiguration('rviz')
     rviz_cfg = LaunchConfiguration('rviz_cfg')
+    slam = LaunchConfiguration('slam')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time', default_value='false',
@@ -42,12 +44,17 @@ def generate_launch_description():
         'rviz_cfg', default_value=default_rviz_config_path,
         description='RViz config file path'
     )
+    declare_slam_cmd = DeclareLaunchArgument(
+        'slam', default_value='false',
+        description='Publish the cumulative voxelized point-cloud map on /slam'
+    )
 
     fast_lio_node = Node(
         package='fast_lio',
         executable='fastlio_mapping',
         parameters=[PathJoinSubstitution([config_path, config_file]),
-                    {'use_sim_time': use_sim_time}],
+                    {'use_sim_time': use_sim_time,
+                     'publish.slam_en': ParameterValue(slam, value_type=bool)}],
         output='screen'
     )
     rviz_node = Node(
@@ -63,6 +70,7 @@ def generate_launch_description():
     ld.add_action(decalre_config_file_cmd)
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
+    ld.add_action(declare_slam_cmd)
 
     ld.add_action(fast_lio_node)
     ld.add_action(rviz_node)

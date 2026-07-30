@@ -33,6 +33,9 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 #include <omp.h>
+#include <chrono>
+#include <cmath>
+#include <memory>
 #include <mutex>
 #include <math.h>
 #include <thread>
@@ -65,6 +68,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
+#include <fast_lio/slam_map.hpp>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
 
@@ -808,6 +812,9 @@ public:
         this->declare_parameter<bool>("publish.path_en", true);
         this->declare_parameter<bool>("publish.effect_map_en", false);
         this->declare_parameter<bool>("publish.map_en", false);
+        this->declare_parameter<bool>("publish.slam_en", false);
+        this->declare_parameter<double>("publish.slam_voxel_size", 0.5);
+        this->declare_parameter<double>("publish.slam_publish_period", 5.0);
         this->declare_parameter<bool>("publish.scan_publish_en", true);
         this->declare_parameter<bool>("publish.dense_publish_en", true);
         this->declare_parameter<bool>("publish.scan_bodyframe_pub_en", true);
@@ -847,6 +854,11 @@ public:
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.effect_map_en", effect_pub_en, false);
         this->get_parameter_or<bool>("publish.map_en", map_pub_en, false);
+        this->get_parameter_or<bool>("publish.slam_en", slam_pub_en_, false);
+        this->get_parameter_or<double>(
+            "publish.slam_voxel_size", slam_voxel_size_, 0.5);
+        this->get_parameter_or<double>(
+            "publish.slam_publish_period", slam_publish_period_, 5.0);
         this->get_parameter_or<bool>("publish.scan_publish_en", scan_pub_en, true);
         this->get_parameter_or<bool>("publish.dense_publish_en", dense_pub_en, true);
         this->get_parameter_or<bool>("publish.scan_bodyframe_pub_en", scan_body_pub_en, true);
@@ -887,6 +899,18 @@ public:
         {
             throw std::invalid_argument(
                 "tf.imu_frame and tf.base_frame are required when tf.connect_sensor_tree is true");
+        }
+        if (slam_pub_en_ &&
+            (!std::isfinite(slam_voxel_size_) || slam_voxel_size_ <= 0.0))
+        {
+            throw std::invalid_argument(
+                "publish.slam_voxel_size must be greater than zero");
+        }
+        if (slam_pub_en_ &&
+            (!std::isfinite(slam_publish_period_) || slam_publish_period_ <= 0.0))
+        {
+            throw std::invalid_argument(
+                "publish.slam_publish_period must be greater than zero");
         }
 
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type %d", p_pre->lidar_type);
@@ -952,6 +976,22 @@ public:
         pubLaserCloudMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", 20);
         pubOdomAftMapped_ = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 20);
         pubPath_ = this->create_publisher<nav_msgs::msg::Path>("/path", 20);
+        if (slam_pub_en_)
+        {
+            rclcpp::QoS slam_qos(rclcpp::KeepLast(1));
+            slam_qos.reliable().transient_local();
+            pubSlamMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+                "/slam", slam_qos);
+            slam_map_ = std::make_unique<fast_lio::SlamMap>(slam_voxel_size_);
+            slam_pub_timer_ = this->create_wall_timer(
+                std::chrono::milliseconds(250),
+                std::bind(&LaserMappingNode::slam_publish_callback, this));
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Cumulative /slam map enabled (voxel size %.3f m, "
+                "preview period %.3f s of LiDAR time).",
+                slam_voxel_size_, slam_publish_period_);
+        }
         tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
         if (connect_sensor_tree_)
         {
@@ -1065,6 +1105,7 @@ private:
                         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
                     }
                     ikdtree.Build(feats_down_world->points);
+                    accumulate_slam_map();
                 }
                 return;
             }
@@ -1123,6 +1164,7 @@ private:
             t3 = omp_get_wtime();
             map_incremental();
             t5 = omp_get_wtime();
+            accumulate_slam_map();
             
             /******* Publish points *******/
             if (path_en)                         publish_path(pubPath_);
@@ -1168,6 +1210,47 @@ private:
         if (map_pub_en) publish_map(pubLaserCloudMap_);
     }
 
+    void accumulate_slam_map()
+    {
+        if (!slam_pub_en_)
+        {
+            return;
+        }
+
+        slam_map_->add(*feats_down_world);
+        slam_last_stamp_ = lidar_end_time;
+        slam_last_update_wall_time_ = std::chrono::steady_clock::now();
+        slam_dirty_ = true;
+    }
+
+    void slam_publish_callback()
+    {
+        if (!slam_dirty_ || slam_map_->size() == 0U)
+        {
+            return;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        const bool first_snapshot = !slam_has_published_;
+        const bool preview_due =
+            slam_last_stamp_ - slam_last_publish_stamp_ >= slam_publish_period_;
+        const bool input_idle =
+            now - slam_last_update_wall_time_ >= std::chrono::seconds(1);
+        if (!first_snapshot && !preview_due && !input_idle)
+        {
+            return;
+        }
+
+        sensor_msgs::msg::PointCloud2 message;
+        pcl::toROSMsg(*slam_map_->snapshot(), message);
+        message.header.stamp = get_ros_time(slam_last_stamp_);
+        message.header.frame_id = "map";
+        pubSlamMap_->publish(message);
+        slam_last_publish_stamp_ = slam_last_stamp_;
+        slam_has_published_ = true;
+        slam_dirty_ = false;
+    }
+
     void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
     {
         RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
@@ -1189,6 +1272,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudEffect_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSlamMap_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
@@ -1201,11 +1285,17 @@ private:
     std::unique_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::TimerBase::SharedPtr map_pub_timer_;
+    rclcpp::TimerBase::SharedPtr slam_pub_timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr map_save_srv_;
 
     bool effect_pub_en = false, map_pub_en = false;
+    bool slam_pub_en_ = false, slam_dirty_ = false, slam_has_published_ = false;
     bool connect_sensor_tree_ = false, sensor_tree_connected_ = false;
     string imu_frame_, base_frame_;
+    double slam_voxel_size_ = 0.5, slam_publish_period_ = 5.0;
+    double slam_last_stamp_ = 0.0, slam_last_publish_stamp_ = 0.0;
+    std::chrono::steady_clock::time_point slam_last_update_wall_time_;
+    std::unique_ptr<fast_lio::SlamMap> slam_map_;
     int effect_feat_num = 0, frame_num = 0;
     double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_incre = 0, aver_time_solve = 0, aver_time_const_H_time = 0;
     bool flg_EKF_converged, EKF_stop_flg = 0;

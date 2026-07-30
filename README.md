@@ -96,6 +96,41 @@ source ~/ros2_ws/install/setup.bash
 rviz2 -d ~/ros2_ws/install/fast_lio/share/fast_lio/rviz_cfg/fastlio_map_ros2.rviz
 ```
 
+### Optional cumulative SLAM map
+
+RViz now treats `/cloud_registered` as the latest registered scan only. To
+also build and display a cumulative point-cloud map for the complete run,
+enable the optional `/slam` output:
+
+```bash
+ros2 launch fast_lio mapping.launch.py \
+  config_file:=top_autoware_front_imu.yaml \
+  rviz:=true \
+  use_sim_time:=true \
+  slam:=true
+```
+
+When `slam:=false` (the default), FAST-LIO does not create the `/slam`
+publisher or accumulate map points. When enabled, every successfully
+registered scan, plus the initial map-seed scan, contributes to a world-frame
+voxel map. The node publishes cumulative `/slam` snapshots with reliable,
+transient-local QoS, so RViz can join late and immediately receive the newest
+cumulative snapshot.
+
+The Autoware YAML files provide two tuning parameters:
+
+```yaml
+publish:
+  slam_voxel_size: 0.5       # metres; smaller values retain more detail and use more RAM
+  slam_publish_period: 5.0   # seconds of LiDAR time between live preview snapshots
+```
+
+The voxel map preserves the whole driven area without retaining billions of
+duplicate raw points. The preview rate follows LiDAR time, so changing the bag
+playback rate does not multiply the number of full-map messages. When input
+stops, the node publishes any remaining changes after approximately one
+wall-clock second; leave FAST-LIO running for that final update.
+
 ## 4. Run with rear IMU
 
 Use the rear config in Terminal 1:
@@ -103,6 +138,8 @@ Use the rear config in Terminal 1:
 ```bash
 ros2 launch fast_lio mapping.launch.py config_file:=top_autoware_rear_imu.yaml rviz:=false use_sim_time:=true
 ```
+
+Add `slam:=true` to this command when the cumulative `/slam` map is required.
 
 ## 5. Docker
 
