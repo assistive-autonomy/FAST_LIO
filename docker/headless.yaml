@@ -1,0 +1,6 @@
+# Absolute paths on the Docker host. The output directory must not exist yet.
+input_bag: /absolute/path/to/input.mcap
+output_bag: /absolute/path/to/new_output_directory
+
+# Use top_autoware_rear_imu.yaml for the rear IMU.
+config_file: top_autoware_front_imu.yaml

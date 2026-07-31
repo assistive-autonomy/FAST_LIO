@@ -1,6 +1,8 @@
+name: fast_lio_headless
+
 services:
-  workspace:
-    image: ${FAST_LIO_IMAGE:-fast-lio2-humble:local}
+  headless:
+    image: ${FAST_LIO_IMAGE:-fast-lio2-headless-humble:local}
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,32 +11,13 @@ services:
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
     init: true
-    stdin_open: true
-    tty: true
-    network_mode: host
-    shm_size: 1gb
+    network_mode: none
     restart: "no"
     stop_grace_period: 20s
     security_opt:
       - no-new-privileges:true
     environment:
-      DISPLAY: ${DISPLAY:-:0}
       FAST_LIO_WS: /opt/fast_lio_ws
       LIVOX_WS: /opt/ws_livox
-      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
-      ROS_LOCALHOST_ONLY: ${ROS_LOCALHOST_ONLY:-0}
-      QT_X11_NO_MITSHM: "1"
-      LIBGL_ALWAYS_SOFTWARE: ${LIBGL_ALWAYS_SOFTWARE:-1}
-    volumes:
-      - type: bind
-        source: ./bag
-        target: /bag
-        read_only: true
-      - type: bind
-        source: ./data
-        target: /data
-      - type: bind
-        source: /tmp/.X11-unix
-        target: /tmp/.X11-unix
-        read_only: true
-    command: ["sleep", "infinity"]
+      ROS_LOCALHOST_ONLY: "1"
+    command: ["ros2", "run", "fast_lio", "fastlio_headless", "--help"]

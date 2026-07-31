@@ -108,7 +108,8 @@ RUN source /opt/ros/humble/setup.bash \
     && ros2 pkg prefix livox_ros_driver2 \
     && ldconfig \
     && ldconfig -p | grep -E 'livox(_lidar)?_sdk' \
-    && ! ldd /opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_mapping | grep -q 'not found'
+    && ! ldd /opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_mapping | grep -q 'not found' \
+    && ! ldd /opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_headless | grep -q 'not found'
 
 
 FROM ${ROS_IMAGE} AS runtime
@@ -166,6 +167,9 @@ RUN ldconfig \
          /bag \
          /data/Log \
          /data/PCD \
+         /input \
+         /output \
+         /work \
          "${XDG_RUNTIME_DIR}" \
          "${HOME_DIR}" \
     && rm -rf \
@@ -182,6 +186,9 @@ RUN ldconfig \
          /opt/fast_lio_ws/src/FAST_LIO/docker/tests/*.sh \
     && chown -R "${USER_UID}:${USER_GID}" \
          /data \
+         /input \
+         /output \
+         /work \
          "${XDG_RUNTIME_DIR}" \
          "${HOME_DIR}"
 
@@ -189,15 +196,19 @@ RUN chmod 0700 "${XDG_RUNTIME_DIR}"
 
 RUN source /etc/fast_lio/setup.bash \
     && MAPPING_BIN=/opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_mapping \
+    && HEADLESS_BIN=/opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_headless \
     && DRIVER_LIB=/opt/ws_livox/install/livox_ros_driver2/lib/liblivox_ros_driver2.so \
     && DRIVER_NODE=/opt/ws_livox/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node \
     && test -x "${MAPPING_BIN}" \
+    && test -x "${HEADLESS_BIN}" \
     && test -f "${DRIVER_LIB}" \
     && test -x "${DRIVER_NODE}" \
     && ldd "${MAPPING_BIN}" >/tmp/fast_lio.ldd \
+    && ldd "${HEADLESS_BIN}" >/tmp/fast_lio_headless.ldd \
     && ldd "${DRIVER_LIB}" >/tmp/livox_driver_library.ldd \
     && ldd "${DRIVER_NODE}" >/tmp/livox_driver_node.ldd \
     && ! grep -q 'not found' /tmp/fast_lio.ldd \
+    && ! grep -q 'not found' /tmp/fast_lio_headless.ldd \
     && ! grep -q 'not found' /tmp/livox_driver_library.ldd \
     && ! grep -q 'not found' /tmp/livox_driver_node.ldd \
     && ldconfig -p | grep -F 'liblivox_lidar_sdk_shared' >/dev/null
@@ -208,10 +219,7 @@ COPY --chmod=0755 docker/run_bag.sh /usr/local/bin/fast-lio-play-bag
 ENV BASH_ENV=/etc/fast_lio/setup.bash
 
 USER ${USER_NAME}
-# Compose mounts the repository's ./bag directory here. Starting shells in
-# /bag lets playback commands use only the MCAP filename (for example,
-# BAG=bag1.mcap) instead of repeating the container mount path.
-WORKDIR /bag
+WORKDIR /work
 
 ENTRYPOINT ["/usr/local/bin/fast-lio-entrypoint"]
-CMD ["bash"]
+CMD ["ros2", "run", "fast_lio", "fastlio_headless", "--help"]
