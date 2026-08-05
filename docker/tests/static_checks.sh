@@ -44,6 +44,10 @@ grep -q '^output_bag:' docker/headless.yaml
 grep -q '^config_file:' docker/headless.yaml
 grep -q -- '--input /input/bag' docker/run_headless.sh
 grep -q -- '--config /run/fast_lio/config.yaml' docker/run_headless.sh
+grep -q -- '--rebuild' docker/run_headless.sh
+grep -q 'config --images headless' docker/run_headless.sh
+grep -q 'docker image inspect' docker/run_headless.sh
+grep -q -- 'run --rm --pull never' docker/run_headless.sh
 grep -q 'fastlio_headless' Dockerfile
 grep -q '^WORKDIR /work$' Dockerfile
 grep -q '^name: fast_lio_headless$' compose.yaml

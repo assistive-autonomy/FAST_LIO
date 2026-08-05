@@ -21,6 +21,9 @@ bag/
 rosbags/
 data/
 
+# Host-only workflow configuration
+docker/headless.yaml
+
 # Generated FAST_LIO output
 Log/**
 PCD/**

@@ -8,17 +8,42 @@ fail() {
 }
 
 usage() {
-  echo "Usage: $0 [workflow-config.yaml]"
+  echo "Usage: $0 [--rebuild] [workflow-config.yaml]"
 }
 
-if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
-  usage
-  exit 0
-fi
-[[ $# -le 1 ]] || { usage >&2; exit 2; }
+rebuild=0
+workflow_argument=""
+while (( $# > 0 )); do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --rebuild)
+      [[ $rebuild -eq 0 ]] || fail "--rebuild may only be specified once"
+      rebuild=1
+      ;;
+    --)
+      shift
+      [[ $# -le 1 ]] || { usage >&2; exit 2; }
+      if (( $# == 1 )); then
+        workflow_argument="$1"
+      fi
+      break
+      ;;
+    -*)
+      fail "Unknown option: $1"
+      ;;
+    *)
+      [[ -z "$workflow_argument" ]] || { usage >&2; exit 2; }
+      workflow_argument="$1"
+      ;;
+  esac
+  shift
+done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-workflow_config="${1:-${repo_root}/docker/headless.yaml}"
+workflow_config="${workflow_argument:-${repo_root}/docker/headless.yaml}"
 [[ -f "$workflow_config" ]] || fail "Workflow config not found: $workflow_config"
 workflow_config="$(realpath -e -- "$workflow_config")"
 
@@ -125,14 +150,31 @@ docker compose version >/dev/null 2>&1 || fail "Docker Compose is not installed"
 export USER_UID="$(id -u)"
 export USER_GID="$(id -g)"
 
+compose=(
+  docker compose
+  --project-directory "$repo_root"
+  --file "${repo_root}/compose.yaml"
+)
+image_name="$("${compose[@]}" config --images headless)"
+[[ -n "$image_name" && "$image_name" != *$'\n'* ]] || \
+  fail "Could not resolve exactly one image for the headless service"
+
 echo "Input:  $input_path"
 echo "Output: $output_path"
 echo "Config: $mapping_config"
 
-exec docker compose \
-  --project-directory "$repo_root" \
-  --file "${repo_root}/compose.yaml" \
-  run --rm --build --no-deps --no-TTY \
+if (( rebuild )); then
+  echo "Image:  $image_name (rebuild requested)"
+  "${compose[@]}" build headless
+elif docker image inspect "$image_name" >/dev/null 2>&1; then
+  echo "Image:  $image_name (reusing local image)"
+else
+  echo "Image:  $image_name (not found locally; building once)"
+  "${compose[@]}" build headless
+fi
+
+exec "${compose[@]}" \
+  run --rm --pull never --no-deps --no-TTY \
   --volume "${input_path}:/input/bag:ro" \
   --volume "${output_parent}:/output" \
   --volume "${mapping_config}:/run/fast_lio/config.yaml:ro" \

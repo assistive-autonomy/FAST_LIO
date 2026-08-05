@@ -24,6 +24,16 @@ Run everything with one command:
 ./docker/run_headless.sh
 ```
 
-The first run builds the image. The output preserves every original message
-and bag timestamp, then adds FAST-LIO `/tf`, `/tf_static`, `/path`, and
-`/cloud_registered` records.
+The first run builds `fast-lio2-headless-humble:local` if that exact image is
+not available on the current Docker host. Later runs reuse the image, start a
+temporary container, process the bag, and remove the container when it exits.
+
+Rebuild intentionally after changing FAST-LIO source code or the Dockerfile:
+
+```bash
+./docker/run_headless.sh --rebuild
+```
+
+You can combine `--rebuild` with a custom workflow file. The output preserves
+every original message and bag timestamp, then adds FAST-LIO `/tf`,
+`/tf_static`, `/path`, and `/cloud_registered` records.
