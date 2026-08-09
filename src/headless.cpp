@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -388,11 +389,15 @@ int transform_bag(const Options & options, SlamEngine & engine)
   std::uint64_t copied_records = 0;
   std::uint64_t lidar_records = 0;
   std::uint64_t imu_records = 0;
-  std::uint64_t solution_records = 0;
+  std::uint64_t processed_scan_records = 0;
+  std::uint64_t consumed_without_solution = 0;
+  std::uint64_t bootstrap_records = 0;
+  std::uint64_t optimized_solution_records = 0;
   std::uint64_t registered_cloud_records = 0;
   std::uint64_t bridge_records = 0;
   PassthroughVerification verification;
   std::unordered_map<std::string, std::uint64_t> copied_by_topic;
+  std::deque<rcutils_time_point_value_t> pending_lidar_timestamps;
 
   try {
     rosbag2_storage::StorageOptions input_storage;
@@ -555,6 +560,7 @@ int transform_bag(const Options & options, SlamEngine & engine)
         } else {
           engine.feed_lidar(deserialize_copy<sensor_msgs::msg::PointCloud2>(*source));
         }
+        pending_lidar_timestamps.push_back(source->time_stamp);
         ++lidar_records;
       } else if (source->topic_name == engine.imu_topic()) {
         sensor_record = true;
@@ -572,11 +578,23 @@ int transform_bag(const Options & options, SlamEngine & engine)
         if (status == ProcessStatus::waiting) {
           break;
         }
+        if (pending_lidar_timestamps.empty()) {
+          throw std::runtime_error(
+                  "FAST-LIO consumed a scan without a matching input LiDAR record");
+        }
+        const auto lidar_record_timestamp = pending_lidar_timestamps.front();
+        pending_lidar_timestamps.pop_front();
+        ++processed_scan_records;
         if (status == ProcessStatus::consumed) {
+          ++consumed_without_solution;
           continue;
         }
 
-        ++solution_records;
+        if (status == ProcessStatus::bootstrap) {
+          ++bootstrap_records;
+        } else {
+          ++optimized_solution_records;
+        }
         cumulative_path.header.frame_id = solution.pose.header.frame_id;
         cumulative_path.header.stamp = solution.pose.header.stamp;
         cumulative_path.poses.push_back(solution.pose);
@@ -584,11 +602,11 @@ int transform_bag(const Options & options, SlamEngine & engine)
         tf2_msgs::msg::TFMessage tf_message;
         tf_message.transforms.push_back(std::move(solution.map_to_body));
         write_generated(
-          writer, tf_message, kTfTopic, source->time_stamp);
+          writer, tf_message, kTfTopic, lidar_record_timestamp);
         write_generated(
-          writer, solution.registered_cloud, kRegisteredCloudTopic, source->time_stamp);
+          writer, solution.registered_cloud, kRegisteredCloudTopic, lidar_record_timestamp);
         ++registered_cloud_records;
-        final_solution_timestamp = source->time_stamp;
+        final_solution_timestamp = lidar_record_timestamp;
       }
     }
 
@@ -609,8 +627,26 @@ int transform_bag(const Options & options, SlamEngine & engine)
     if (lidar_records == 0U || imu_records == 0U) {
       throw std::runtime_error("no selected lidar or IMU records were fed to FAST-LIO");
     }
-    if (solution_records == 0U) {
+    const auto result_records = bootstrap_records + optimized_solution_records;
+    if (optimized_solution_records == 0U) {
       throw std::runtime_error("FAST-LIO produced no SLAM solution");
+    }
+    if (!pending_lidar_timestamps.empty() || processed_scan_records != lidar_records) {
+      throw std::runtime_error(
+              "headless FAST-LIO did not process every input LiDAR scan: fed " +
+              std::to_string(lidar_records) + ", processed " +
+              std::to_string(processed_scan_records) + ", pending " +
+              std::to_string(pending_lidar_timestamps.size()));
+    }
+    if (consumed_without_solution != 0U || result_records != lidar_records ||
+      registered_cloud_records != lidar_records)
+    {
+      throw std::runtime_error(
+              "headless FAST-LIO did not produce one result per input LiDAR scan: LiDAR " +
+              std::to_string(lidar_records) + ", results " +
+              std::to_string(result_records) + ", registered clouds " +
+              std::to_string(registered_cloud_records) + ", unsolved " +
+              std::to_string(consumed_without_solution));
     }
     if (engine.sensor_tree_bridge_enabled() && !bridge_written) {
       throw std::runtime_error(
@@ -619,9 +655,8 @@ int transform_bag(const Options & options, SlamEngine & engine)
     }
 
     // The result bag contains one cumulative trajectory. Its ROS header stamp remains the last
-    // solved LiDAR scan time; its Humble rosbag timestamp is copied from the source record that
-    // produced that solution. Registered clouds are written beside each solution so playback
-    // preserves the normal live FAST-LIO scan cadence.
+    // solved LiDAR scan time; its Humble rosbag timestamp is copied from that LiDAR's input record.
+    // Registered clouds are written beside each result so playback preserves scan cadence.
     write_generated(
       writer, cumulative_path, kPathTopic, final_solution_timestamp);
 
@@ -654,8 +689,13 @@ int transform_bag(const Options & options, SlamEngine & engine)
             << " (exact topic, payload, timestamp, and storage order)\n"
             << "  lidar records fed:   " << lidar_records << "\n"
             << "  IMU records fed:     " << imu_records << "\n"
-            << "  SLAM solutions:      " << solution_records << "\n"
-            << "  generated /tf:       " << solution_records << "\n"
+            << "  LiDAR scans processed:" << processed_scan_records << "\n"
+            << "  bootstrap estimates: " << bootstrap_records << "\n"
+            << "  optimized solutions: " << optimized_solution_records << "\n"
+            << "  all result frames:   "
+            << (bootstrap_records + optimized_solution_records) << "\n"
+            << "  generated /tf:       "
+            << (bootstrap_records + optimized_solution_records) << "\n"
             << "  generated /path:     1 (cumulative)\n"
             << "  registered scans:    " << registered_cloud_records << "\n"
             << "  generated /tf_static:" << bridge_records << "\n"

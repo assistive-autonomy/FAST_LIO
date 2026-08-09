@@ -40,6 +40,11 @@ ros2 run fast_lio fastlio_headless \
   --config "$CONFIG"
 ```
 
+Headless mode automatically writes one result for every input LiDAR scan. Scans
+used by FAST-LIO to initialize its time base, IMU state, and map are represented
+by bootstrap estimates; subsequent frames are normal optimized solutions. No
+warm-up bag or additional runtime option is required.
+
 The output contains every original serialized bag record with its original
 payload, topic, single Humble rosbag timestamp, and existing `/tf` and
 `/tf_static` messages unchanged. It adds:
@@ -47,10 +52,11 @@ payload, topic, single Humble rosbag timestamp, and existing `/tf` and
 - FAST-LIO `map -> body` transforms on `/tf`
 - the `body -> base_footprint` bridge on `/tf_static`
 - the estimated trajectory on `/path`
-- one downsampled, de-skewed registered scan per FAST-LIO solution on
-  `/cloud_registered`
+- one registered scan per input LiDAR frame on `/cloud_registered`
 
 Generated SLAM message headers use the corresponding LiDAR scan timestamps.
+Bootstrap frames without complete IMU coverage use the preprocessed raw cloud;
+the completion summary reports bootstrap and optimized counts separately.
 Before reporting success, the parser re-reads both bags in ROS 2 storage order
 and byte-compares every original record's topic, payload, and rosbag timestamp.
 

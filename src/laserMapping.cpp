@@ -493,9 +493,9 @@ void map_incremental()
 
 PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI());
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
-sensor_msgs::msg::PointCloud2 make_registered_frame_world()
+sensor_msgs::msg::PointCloud2 make_registered_frame_world(
+    const PointCloudXYZI::Ptr & laserCloudFullRes)
 {
-    PointCloudXYZI::Ptr laserCloudFullRes(dense_pub_en ? feats_undistort : feats_down_body);
     const int size = laserCloudFullRes->points.size();
     PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
 
@@ -509,6 +509,12 @@ sensor_msgs::msg::PointCloud2 make_registered_frame_world()
     laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
     laserCloudmsg.header.frame_id = "map";
     return laserCloudmsg;
+}
+
+sensor_msgs::msg::PointCloud2 make_registered_frame_world()
+{
+    PointCloudXYZI::Ptr laserCloudFullRes(dense_pub_en ? feats_undistort : feats_down_body);
+    return make_registered_frame_world(laserCloudFullRes);
 }
 
 void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull)
@@ -1062,9 +1068,19 @@ public:
     fast_lio::headless::ProcessStatus process_next(
         fast_lio::headless::SlamResult & result) override
     {
+        headless_bootstrap_ready_ = false;
+        headless_bootstrap_cloud_.reset();
         bool consumed = false;
         if (!process_scan(consumed))
         {
+            if (headless_bootstrap_ready_)
+            {
+                result.map_to_body = make_map_to_body_transform();
+                result.pose = make_body_pose();
+                result.registered_cloud =
+                    make_registered_frame_world(headless_bootstrap_cloud_);
+                return fast_lio::headless::ProcessStatus::bootstrap;
+            }
             return consumed ? fast_lio::headless::ProcessStatus::consumed :
                    fast_lio::headless::ProcessStatus::waiting;
         }
@@ -1077,6 +1093,25 @@ public:
 #endif
 
 private:
+#ifdef FASTLIO_HEADLESS
+    void prepare_headless_bootstrap(const PointCloudXYZI::Ptr & cloud)
+    {
+        state_point = kf.get_x();
+        // IMU_init normally installs these configured extrinsics on the second scan. The first
+        // scan has no IMU coverage in some split bags, so apply them to the output-only state.
+        // The EKF itself is deliberately left untouched.
+        state_point.offset_T_L_I = Lidar_T_wrt_IMU;
+        state_point.offset_R_L_I = Lidar_R_wrt_IMU;
+        pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
+        geoQuat.x = state_point.rot.coeffs()[0];
+        geoQuat.y = state_point.rot.coeffs()[1];
+        geoQuat.z = state_point.rot.coeffs()[2];
+        geoQuat.w = state_point.rot.coeffs()[3];
+        headless_bootstrap_cloud_ = cloud;
+        headless_bootstrap_ready_ = true;
+    }
+#endif
+
 #ifndef FASTLIO_HEADLESS
     void publish_sensor_tree_bridge()
     {
@@ -1128,6 +1163,9 @@ private:
                 first_lidar_time = Measures.lidar_beg_time;
                 p_imu->first_lidar_time = first_lidar_time;
                 flg_first_scan = false;
+#ifdef FASTLIO_HEADLESS
+                prepare_headless_bootstrap(Measures.lidar);
+#endif
                 return false;
             }
 
@@ -1140,12 +1178,22 @@ private:
             svd_time   = 0;
             t0 = omp_get_wtime();
 
+#ifdef FASTLIO_HEADLESS
+            const bool imu_was_initializing = p_imu->initialization_required();
+#endif
             p_imu->Process(Measures, kf, feats_undistort);
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
             if (feats_undistort->empty() || (feats_undistort == NULL))
             {
+#ifdef FASTLIO_HEADLESS
+                if (imu_was_initializing)
+                {
+                    prepare_headless_bootstrap(Measures.lidar);
+                    return false;
+                }
+#endif
                 RCLCPP_WARN(this->get_logger(), "No point, skip this scan!\n");
                 return false;
             }
@@ -1174,6 +1222,12 @@ private:
                     }
                     ikdtree.Build(feats_down_world->points);
                 }
+#ifdef FASTLIO_HEADLESS
+                if (ikdtree.Root_Node != nullptr)
+                {
+                    prepare_headless_bootstrap(feats_undistort);
+                }
+#endif
                 return false;
             }
             int featsFromMapNum = ikdtree.validnum();
@@ -1327,6 +1381,10 @@ private:
 
     FILE *fp = nullptr;
     ofstream fout_pre, fout_out, fout_dbg;
+#ifdef FASTLIO_HEADLESS
+    bool headless_bootstrap_ready_ = false;
+    PointCloudXYZI::Ptr headless_bootstrap_cloud_;
+#endif
 };
 
 #ifdef FASTLIO_HEADLESS

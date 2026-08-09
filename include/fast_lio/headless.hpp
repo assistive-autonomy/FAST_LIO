@@ -24,6 +24,7 @@ enum class ProcessStatus
 {
   waiting,
   consumed,
+  bootstrap,
   solution,
 };
 

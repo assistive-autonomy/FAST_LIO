@@ -17,6 +17,8 @@ config_file: top_autoware_front_imu.yaml
 
 Use `top_autoware_rear_imu.yaml` for the rear IMU. The input may be an MCAP
 file or rosbag2 directory; the output directory must not already exist.
+Headless mode automatically emits one timestamp-matched result for every input
+LiDAR scan, including explicit bootstrap estimates during FAST-LIO startup.
 
 Run everything with one command:
 
@@ -36,4 +38,5 @@ Rebuild intentionally after changing FAST-LIO source code or the Dockerfile:
 
 You can combine `--rebuild` with a custom workflow file. The output preserves
 every original message and bag timestamp, then adds FAST-LIO `/tf`,
-`/tf_static`, `/path`, and `/cloud_registered` records.
+`/tf_static`, `/path`, and `/cloud_registered` records. The completion summary
+reports bootstrap estimates separately from optimized solutions.
