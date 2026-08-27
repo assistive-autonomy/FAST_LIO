@@ -43,7 +43,15 @@ while (( $# > 0 )); do
 done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-workflow_config="${workflow_argument:-${repo_root}/docker/headless.yaml}"
+shared_workflow_config="${repo_root}/docker/headless.yaml"
+local_workflow_config="${repo_root}/docker/headless.local.yaml"
+if [[ -n "$workflow_argument" ]]; then
+  workflow_config="$workflow_argument"
+elif [[ -f "$local_workflow_config" ]]; then
+  workflow_config="$local_workflow_config"
+else
+  workflow_config="$shared_workflow_config"
+fi
 [[ -f "$workflow_config" ]] || fail "Workflow config not found: $workflow_config"
 workflow_config="$(realpath -e -- "$workflow_config")"
 

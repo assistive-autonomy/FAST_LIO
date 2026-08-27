@@ -11,6 +11,7 @@ PCD/*.pcd
 .env
 /bag/
 /data/
+/docker/headless.local.yaml
 
 # Local backup files
 *.bak

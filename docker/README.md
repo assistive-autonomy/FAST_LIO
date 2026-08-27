@@ -7,7 +7,13 @@ git clone --recursive -b headless https://github.com/assistive-autonomy/FAST_LIO
 cd FAST_LIO
 ```
 
-Edit `docker/headless.yaml` with absolute host paths:
+For machine-local paths, copy the shared template to the ignored local file:
+
+```bash
+cp docker/headless.yaml docker/headless.local.yaml
+```
+
+Then edit `docker/headless.local.yaml`:
 
 ```yaml
 input_bag: /home/user/data/input.mcap
@@ -25,6 +31,10 @@ Run everything with one command:
 ```bash
 ./docker/run_headless.sh
 ```
+
+The launcher uses `docker/headless.local.yaml` when present and otherwise uses
+the tracked `docker/headless.yaml` template. You can also pass another workflow
+file explicitly as the sole positional argument.
 
 The first run builds `fast-lio2-headless-humble:local` if that exact image is
 not available on the current Docker host. Later runs reuse the image, start a
