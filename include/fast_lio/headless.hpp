@@ -6,6 +6,9 @@
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#ifdef FASTLIO_HEADLESS
+#include <geometry_msgs/msg/vector3_stamped.hpp>
+#endif
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -50,6 +53,11 @@ public:
   virtual void feed_lidar(sensor_msgs::msg::PointCloud2::UniquePtr message) = 0;
   virtual void feed_lidar(livox_ros_driver2::msg::CustomMsg::UniquePtr message) = 0;
   virtual void feed_imu(sensor_msgs::msg::Imu::UniquePtr message) = 0;
+#ifdef FASTLIO_HEADLESS
+  // Optional measured velocity at the IMU origin, expressed in the IMU frame.
+  virtual void feed_body_velocity(
+    geometry_msgs::msg::Vector3Stamped::UniquePtr message) = 0;
+#endif
   virtual ProcessStatus process_next(SlamResult & result) = 0;
 };
 

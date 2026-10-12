@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.7
+# Update only the headless executable using the installed build dependencies.
+ARG HEADLESS_BASE_IMAGE=run-all-fast-lio:local
+FROM ${HEADLESS_BASE_IMAGE} AS build
+USER root
+COPY include/fast_lio/headless.hpp /opt/fast_lio_ws/src/FAST_LIO/include/fast_lio/headless.hpp
+COPY src/headless.cpp src/laserMapping.cpp src/IMU_Processing.hpp /opt/fast_lio_ws/src/FAST_LIO/src/
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN source /etc/fast_lio/setup.bash \
+    && cmake -S /opt/fast_lio_ws/src/FAST_LIO -B /tmp/headless-build \
+         -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/headless-build --target fastlio_headless --parallel 2
+
+FROM ${HEADLESS_BASE_IMAGE}
+USER root
+COPY --from=build /tmp/headless-build/fastlio_headless /opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_headless
+COPY include/fast_lio/headless.hpp /opt/fast_lio_ws/src/FAST_LIO/include/fast_lio/headless.hpp
+COPY src/headless.cpp src/laserMapping.cpp src/IMU_Processing.hpp /opt/fast_lio_ws/src/FAST_LIO/src/
+LABEL io.assistive-autonomy.fast-lio.initialization="orientation_twist_moving_start_v1"
+RUN source /etc/fast_lio/setup.bash \
+    && chmod 0755 /opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_headless \
+    && ! ldd /opt/fast_lio_ws/install/fast_lio/lib/fast_lio/fastlio_headless | grep -q 'not found' \
+    && ros2 run fast_lio fastlio_headless --help
+USER ros

@@ -1065,6 +1065,20 @@ public:
         imu_cbk(std::move(message));
     }
 
+    void feed_body_velocity(
+        geometry_msgs::msg::Vector3Stamped::UniquePtr message) override
+    {
+        if (!message || message->header.frame_id != imu_frame_ ||
+            message->header.stamp.sec < 0 ||
+            message->header.stamp.nanosec >= 1000000000U)
+        {
+            return;
+        }
+        p_imu->set_headless_body_velocity(
+            V3D(message->vector.x, message->vector.y, message->vector.z),
+            get_time_sec(message->header.stamp));
+    }
+
     fast_lio::headless::ProcessStatus process_next(
         fast_lio::headless::SlamResult & result) override
     {

@@ -1,6 +1,7 @@
 #include "fast_lio/headless.hpp"
 
 #include <cstdlib>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -32,6 +33,11 @@
 #include <tf2/exceptions.hpp>
 #include <tf2/time.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
+#ifdef FASTLIO_HEADLESS
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Vector3.h>
+#endif
 
 namespace fast_lio::headless
 {
@@ -43,6 +49,9 @@ constexpr char kRegisteredCloudTopic[] = "/cloud_registered";
 constexpr char kTfTopic[] = "/tf";
 constexpr char kTfStaticTopic[] = "/tf_static";
 constexpr char kCdrFormat[] = "cdr";
+#ifdef FASTLIO_HEADLESS
+constexpr char kVehicleTwistTopic[] = "/vehicle/twist";
+#endif
 
 std::string require_option_value(int argc, char ** argv, int & index, const std::string & option)
 {
@@ -443,6 +452,12 @@ int transform_bag(const Options & options, SlamEngine & engine)
     require_topic_type(topics_by_name, engine.imu_topic(), imu_type);
     require_generated_tf_compatibility(topics_by_name, kTfTopic);
     require_generated_tf_compatibility(topics_by_name, kTfStaticTopic);
+#ifdef FASTLIO_HEADLESS
+    const auto twist_topic = topics_by_name.find(kVehicleTwistTopic);
+    const bool has_vehicle_twist = twist_topic != topics_by_name.end() &&
+      twist_topic->second.type ==
+      rosidl_generator_traits::name<geometry_msgs::msg::TwistStamped>();
+#endif
 
     std::unordered_map<std::string, std::uint64_t> expected_by_topic;
     for (const auto & information : input_metadata.topics_with_message_count) {
@@ -567,6 +582,61 @@ int transform_bag(const Options & options, SlamEngine & engine)
         engine.feed_imu(deserialize_copy<sensor_msgs::msg::Imu>(*source));
         ++imu_records;
       }
+#ifdef FASTLIO_HEADLESS
+      else if (has_vehicle_twist && source->topic_name == kVehicleTwistTopic) {
+        // The original serialized record has already been written unchanged.
+        // Only an optional initialization prior is transformed into the IMU
+        // frame and shifted from the twist origin to the IMU origin.
+        try {
+          auto message = deserialize_copy<geometry_msgs::msg::TwistStamped>(*source);
+          const auto &header = message->header;
+          const auto &linear = message->twist.linear;
+          const auto &angular = message->twist.angular;
+          if (header.frame_id.empty() || engine.imu_frame().empty() ||
+              header.stamp.sec < 0 || header.stamp.nanosec >= 1000000000U ||
+              stamp_is_zero(header.stamp) ||
+              !std::isfinite(linear.x) || !std::isfinite(linear.y) ||
+              !std::isfinite(linear.z) || !std::isfinite(angular.x) ||
+              !std::isfinite(angular.y) || !std::isfinite(angular.z))
+          {
+            continue;
+          }
+          tf2::Quaternion rotation(0.0, 0.0, 0.0, 1.0);
+          tf2::Vector3 translation(0.0, 0.0, 0.0);
+          if (header.frame_id != engine.imu_frame()) {
+            const auto imu_from_twist = static_tf_buffer.lookupTransform(
+              engine.imu_frame(), header.frame_id, tf2::TimePointZero);
+            const auto &q = imu_from_twist.transform.rotation;
+            const auto &t = imu_from_twist.transform.translation;
+            rotation = tf2::Quaternion(q.x, q.y, q.z, q.w);
+            translation = tf2::Vector3(t.x, t.y, t.z);
+          }
+          if (!std::isfinite(rotation.length2()) || rotation.length2() <= 1e-12 ||
+              !std::isfinite(translation.x()) || !std::isfinite(translation.y()) ||
+              !std::isfinite(translation.z()))
+          {
+            continue;
+          }
+          rotation.normalize();
+          const auto omega_imu = tf2::quatRotate(
+            rotation, tf2::Vector3(angular.x, angular.y, angular.z));
+          const auto velocity_imu = tf2::quatRotate(
+            rotation, tf2::Vector3(linear.x, linear.y, linear.z)) -
+            omega_imu.cross(translation);
+          auto prior = std::make_unique<geometry_msgs::msg::Vector3Stamped>();
+          prior->header = header;
+          prior->header.frame_id = engine.imu_frame();
+          prior->vector.x = velocity_imu.x();
+          prior->vector.y = velocity_imu.y();
+          prior->vector.z = velocity_imu.z();
+          engine.feed_body_velocity(std::move(prior));
+          sensor_record = true;
+        } catch (const std::exception &) {
+          // Invalid or unresolved optional records never alter the bag or
+          // interrupt processing. Initialization reports absent valid priors.
+        }
+      }
+#endif
 
       if (!sensor_record) {
         continue;

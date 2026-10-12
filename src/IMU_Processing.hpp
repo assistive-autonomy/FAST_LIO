@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 #include <math.h>
 #include <deque>
 #include <mutex>
@@ -47,6 +48,9 @@ class ImuProcess
   void set_gyr_bias_cov(const V3D &b_g);
   void set_acc_bias_cov(const V3D &b_a);
   bool initialization_required() const {return imu_need_init_;}
+#ifdef FASTLIO_HEADLESS
+  void set_headless_body_velocity(const V3D &velocity, double stamp_seconds);
+#endif
   Eigen::Matrix<double, 12, 12> Q;
   void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr pcl_un_);
 
@@ -80,6 +84,14 @@ class ImuProcess
   int    init_iter_num = 1;
   bool   b_first_frame_ = true;
   bool   imu_need_init_ = true;
+#ifdef FASTLIO_HEADLESS
+  bool headless_orientation_initialization_ = false;
+  V3D headless_initial_gravity_ = V3D(0, 0, -G_m_s2);
+  double headless_acceleration_scale_ = 1.0;
+  // Keep the optional prior across Reset(), which the first IMU_init calls.
+  deque<std::pair<double, V3D>> headless_velocity_priors_;
+  bool headless_velocity_seeded_ = false;
+#endif
 };
 
 ImuProcess::ImuProcess()
@@ -94,6 +106,10 @@ ImuProcess::ImuProcess()
   mean_acc      = V3D(0, 0, -1.0);
   mean_gyr      = V3D(0, 0, 0);
   angvel_last     = Zero3d;
+#ifdef FASTLIO_HEADLESS
+  acc_s_last = Zero3d;
+  last_lidar_end_time_ = 0.0;
+#endif
   Lidar_T_wrt_IMU = Zero3d;
   Lidar_R_wrt_IMU = Eye3d;
   last_imu_.reset(new sensor_msgs::msg::Imu());
@@ -107,6 +123,14 @@ void ImuProcess::Reset()
   mean_acc      = V3D(0, 0, -1.0);
   mean_gyr      = V3D(0, 0, 0);
   angvel_last       = Zero3d;
+#ifdef FASTLIO_HEADLESS
+  acc_s_last = Zero3d;
+  last_lidar_end_time_ = 0.0;
+  headless_orientation_initialization_ = false;
+  headless_initial_gravity_ = V3D(0, 0, -G_m_s2);
+  headless_acceleration_scale_ = 1.0;
+  headless_velocity_seeded_ = false;
+#endif
   imu_need_init_    = true;
   start_timestamp_  = -1;
   init_iter_num     = 1;
@@ -154,6 +178,38 @@ void ImuProcess::set_acc_bias_cov(const V3D &b_a)
   cov_bias_acc = b_a;
 }
 
+#ifdef FASTLIO_HEADLESS
+void ImuProcess::set_headless_body_velocity(const V3D &velocity, double stamp_seconds)
+{
+  if (!imu_need_init_ || !velocity.allFinite() ||
+      !std::isfinite(stamp_seconds) || stamp_seconds <= 0.0)
+  {
+    return;
+  }
+  if (!headless_velocity_priors_.empty() &&
+      stamp_seconds < headless_velocity_priors_.back().first)
+  {
+    return;
+  }
+  if (!headless_velocity_priors_.empty() &&
+      stamp_seconds == headless_velocity_priors_.back().first)
+  {
+    headless_velocity_priors_.back().second = velocity;
+  }
+  else
+  {
+    headless_velocity_priors_.emplace_back(stamp_seconds, velocity);
+  }
+  // A short history lets initialization select a true prior when record order
+  // delivers a velocity whose ROS header is slightly ahead of this scan end.
+  while (headless_velocity_priors_.size() > 1 &&
+         stamp_seconds - headless_velocity_priors_.front().first > 2.0)
+  {
+    headless_velocity_priors_.pop_front();
+  }
+}
+#endif
+
 void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N)
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance
@@ -171,6 +227,34 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     mean_acc << imu_acc.x, imu_acc.y, imu_acc.z;
     mean_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;
     first_lidar_time = meas.lidar_beg_time;
+#ifdef FASTLIO_HEADLESS
+    // A split bag may begin while the vehicle is accelerating or turning.
+    // Use the ROS IMU's measured attitude to establish gravity in the initial
+    // body-aligned map frame instead of treating dynamic acceleration as tilt.
+    // ROS orientation is world_from_imu; acceleration is already in m/s^2.
+    const auto &first_imu = *meas.imu.front();
+    const auto &orientation = first_imu.orientation;
+    Eigen::Quaterniond world_from_imu(
+      orientation.w, orientation.x, orientation.y, orientation.z);
+    const double orientation_norm = world_from_imu.norm();
+    headless_orientation_initialization_ =
+      std::isfinite(first_imu.orientation_covariance[0]) &&
+      first_imu.orientation_covariance[0] >= 0.0 &&
+      std::isfinite(orientation_norm) && orientation_norm > 1e-12;
+    if (headless_orientation_initialization_)
+    {
+      world_from_imu.normalize();
+      headless_initial_gravity_ =
+        world_from_imu.conjugate() * V3D(0, 0, -G_m_s2);
+      headless_acceleration_scale_ = 1.0;
+    }
+    else
+    {
+      std::cerr << "Headless IMU orientation unavailable: falling back to "
+                << "stationary acceleration/gyro initialization; a moving "
+                << "split-bag start is ambiguous." << std::endl;
+    }
+#endif
   }
 
   for (const auto &imu : meas.imu)
@@ -191,10 +275,44 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     N ++;
   }
   state_ikfom init_state = kf_state.get_x();
+#ifdef FASTLIO_HEADLESS
+  headless_velocity_seeded_ = false;
+  init_state.vel = Zero3d;
+  for (auto prior = headless_velocity_priors_.rbegin();
+       prior != headless_velocity_priors_.rend(); ++prior)
+  {
+    const double age = meas.lidar_end_time - prior->first;
+    if (age < 0.0) continue;
+    // ROS epoch seconds are represented as doubles in MeasureGroup. Allow
+    // only their floating-point resolution at the exact 200 ms boundary.
+    const double timestamp_resolution =
+      2.0 * std::numeric_limits<double>::epsilon() *
+      std::max(1.0, std::max(std::abs(meas.lidar_end_time), std::abs(prior->first)));
+    if (age <= 0.2 + timestamp_resolution)
+    {
+      init_state.vel = init_state.rot * prior->second;
+      headless_velocity_seeded_ = true;
+    }
+    break;
+  }
+  if (headless_orientation_initialization_)
+  {
+    init_state.grav = S2(headless_initial_gravity_);
+    // Initial turning is a real angular rate, not a measured sensor bias.
+    init_state.bg = Zero3d;
+  }
+  else
+  {
+    init_state.grav = S2(- mean_acc / mean_acc.norm() * G_m_s2);
+    init_state.bg = mean_gyr;
+    headless_acceleration_scale_ = G_m_s2 / mean_acc.norm();
+  }
+#else
   init_state.grav = S2(- mean_acc / mean_acc.norm() * G_m_s2);
   
   //state_inout.rot = Eye3d; // Exp(mean_acc.cross(V3D(0, 0, -1 / scale_gravity)));
   init_state.bg  = mean_gyr;
+#endif
   init_state.offset_T_L_I = Lidar_T_wrt_IMU;
   init_state.offset_R_L_I = Lidar_R_wrt_IMU;
   kf_state.change_x(init_state);
@@ -258,7 +376,11 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
 
     // fout_imu << setw(10) << head->header.stamp.toSec() - first_lidar_time << " " << angvel_avr.transpose() << " " << acc_avr.transpose() << endl;
 
+#ifdef FASTLIO_HEADLESS
+    acc_avr = acc_avr * headless_acceleration_scale_;
+#else
     acc_avr     = acc_avr * G_m_s2 / mean_acc.norm(); // - state_inout.ba;
+#endif
 
     if(head_stamp < last_lidar_end_time_)
     {
@@ -362,6 +484,29 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
 
       cov_acc = cov_acc_scale;
       cov_gyr = cov_gyr_scale;
+#ifdef FASTLIO_HEADLESS
+      last_lidar_end_time_ = meas.lidar_end_time;
+      acc_s_last = Zero3d;
+      std::cout << "Headless IMU initialization: gravity_method="
+                << (headless_orientation_initialization_ ?
+                    "provided_orientation" : "stationary_acceleration")
+                << ", gyro_bias_method="
+                << (headless_orientation_initialization_ ?
+                    "zero_prior" : "stationary_mean")
+                << ", acceleration_scale=" << headless_acceleration_scale_
+                << ", gravity=" << imu_state.grav
+                << ", gyro_bias=" << imu_state.bg.transpose()
+                << ", velocity_method="
+                << (headless_velocity_seeded_ ? "vehicle_twist_prior" : "zero_prior")
+                << ", initial_velocity=" << imu_state.vel.transpose() << std::endl;
+      if (!headless_velocity_seeded_)
+      {
+        std::cerr << "Headless initial velocity: no valid /vehicle/twist prior "
+                  << "within 200 ms of initialization; retaining zero velocity."
+                  << std::endl;
+      }
+      headless_velocity_priors_.clear();
+#endif
       std::cout << "IMU Initial Done" << std::endl;
       // ROS_INFO("IMU Initial Done: Gravity: %.4f %.4f %.4f %.4f; state.bias_g: %.4f %.4f %.4f; acc covarience: %.8f %.8f %.8f; gry covarience: %.8f %.8f %.8f",\
       //          imu_state.grav[0], imu_state.grav[1], imu_state.grav[2], mean_acc.norm(), cov_bias_gyr[0], cov_bias_gyr[1], cov_bias_gyr[2], cov_acc[0], cov_acc[1], cov_acc[2], cov_gyr[0], cov_gyr[1], cov_gyr[2]);
